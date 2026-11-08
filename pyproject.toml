@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plugin-platform-hw-stats"
+version = "0.1.0"  # the plugin's own release (CHANGELOG.md); the app shows it on the Plugins view
+description = "Hardware stats for Liminal: this machine's processor, memory, network, disks and data files, and every Liminal app's processes, on Windows and Linux alike."
+readme = "README.md"
+requires-python = ">=3.10"
+# the library it plugs into (the machine kind: liminal_libs.machines, plugin API 2.1; the Linux probe since 1.22.0)
+dependencies = ["liminal-libs>=1.22.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.entry-points."liminal.providers"]
+hw-stats = "plugin_platform_hw_stats"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
