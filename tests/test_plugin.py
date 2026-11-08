@@ -12,6 +12,8 @@ import pytest
 
 import plugin_platform_hw_stats as hw
 import plugin_platform_hw_stats.__main__ as cli
+from liminal_libs.apps import EnvironmentLogin
+from liminal_libs.ports import Outcome
 from liminal_libs.resources import Conn, Disk, Machine, Net, Proc
 from plugin_platform_hw_stats import HwStatsPlugin
 
@@ -51,13 +53,34 @@ class FakeProbe:
                 Conn(9999, "established", "10.0.0.2:51000", "10.0.0.9:443")]
 
 
-def stand_in(tmp_path):
-    (tmp_path / "charts").mkdir()
+HOME = "93.184.216.34"
+
+
+def resolved(version):
+    """This network's public address as a stand-in for the name servers: an IPv4 address, no IPv6 route."""
+    return (HOME, "OpenDNS") if version == 4 else (None, "neither OpenDNS nor Google answered with a public IPv6 address")
+
+
+class Checker:
+    """check-host.net's check as a stand-in: each port's state as given (blocked otherwise); what was asked kept."""
+
+    def __init__(self, states):
+        self.states, self.asked = states, []
+
+    def check(self, address, ports):
+        self.asked.append((address, tuple(ports)))
+        return {p: Outcome(self.states.get(p, "blocked"), f"{self.states.get(p, 'blocked')}: as the stand-in says", 1_800_000_500.0)
+                for p in ports}
+
+
+def stand_in(tmp_path, resolve=resolved, **services):
+    (tmp_path / "charts").mkdir(parents=True, exist_ok=True)
     (tmp_path / "charts" / "liminal.db").write_bytes(b"x" * 3072)
-    (tmp_path / "login").mkdir()
+    (tmp_path / "login").mkdir(exist_ok=True)
     (tmp_path / "login" / "users.db").write_bytes(b"x" * 1024)
     probe, t = FakeProbe(), [100.0]
-    plugin = HwStatsPlugin(probe=probe, data=tmp_path, clock=lambda: t[0], wall=lambda: 1_800_010_000.0 + t[0], cpu_clock=lambda: 0.0)
+    plugin = HwStatsPlugin(probe=probe, data=tmp_path, resolve=resolve, clock=lambda: t[0], wall=lambda: 1_800_010_000.0 + t[0],
+                           cpu_clock=lambda: 0.0, **services)
 
     def later(seconds=2.0):
         probe.step()
@@ -87,7 +110,23 @@ def test_the_status_says_the_machine_every_liminal_program_the_disks_and_the_dat
     assert s["dataFiles"] == "4.0 KB in 2 files" and s["dataFolder"] == str(tmp_path) and s["dataGrowth"] == "after a minute of samples"
     assert s["system"] in ("Windows", "Linux", sys.platform) and s["sampled"] == "every 2 s while shown, every 30 s otherwise"
     assert s["sampling"] is False  # not attached: nothing samples on its own
-    programs, disks, io, folders = s["tables"]
+    keys = list(s)
+    assert keys[keys.index("network"):keys.index("network") + 6] == ["network", "adapters", "link", "publicAddress", "publicIpv6", "ports"]
+    assert s["publicAddress"] == "not read yet (it is read while the plugin is attached to the platform)"
+    assert s["ports"] == ("8765 (Liminal's charts), 8775 (Liminal's platform), 8785 (Liminal's integrator), 8795 (Liminal's login), "
+                          "8796 (the integrator's login) (Liminal's own: HW_STATS_PORTS is not set)") and "problem" not in s
+    programs, ports, disks, io, folders = s["tables"]
+    assert ports["title"] == "Ports" and [c["title"] for c in ports["columns"]] == ["Port", "Here", "From the internet", "Out from this machine"]
+    assert ports["rows"][0] == [{"text": "8765", "sub": "Liminal's charts"},
+                                {"text": "listening", "sub": "Chart app · port 8765 (pid 4242), this machine only"},
+                                {"text": "–", "sub": "not checked"}, {"text": "–", "sub": "not checked"}]
+    assert ports["rows"][1][1] == {"text": "free", "sub": "nothing listens on it here"} and len(ports["rows"]) == 5
+    assert ports["rows"][4][0] == {"text": "8796", "sub": "the integrator's login"}
+    assert ports["actions"] == [{"form": "ports", "title": "Check ports…", "values": {"ports": "8765 8775 8785 8795 8796"}}]
+    [form] = s["forms"]
+    assert form["id"] == "ports" and form["hook"] == "check_ports" and form["fields"][0]["value"] == "8765 8775 8785 8795 8796"
+    assert s["actions"] == [{"hook": "public_address", "args": [], "title": "Read the public address again",
+                             "note": "asks OpenDNS (else Google's name server) for this network's address now"}]
     assert programs["title"] == "Liminal's programs" and [c["title"] for c in programs["columns"]][:3] == ["Program", "Processes", "CPU"]
     rows = {r[0]["text"] if isinstance(r[0], dict) else r[0]: r for r in programs["rows"]}
     assert set(rows) == {"Chart app · port 8765", "Integrator (daemon)", "Platform (this one)"}
@@ -114,10 +153,10 @@ def test_sampling_runs_only_while_attached(tmp_path):
     class App:
         NAME = "platform"
     interface = p.attach(App(), None)
-    assert p.sampling and p.app is not None and {"present", "status", "view", "charts"} <= set(interface["hooks"])
+    assert p.sampling and p.app is not None and {"present", "status", "view", "charts", "public_address", "check_ports"} <= set(interface["hooks"])
     first = p.monitor
     p.detach()
-    assert not p.sampling and p.app is None and p._monitor is None and first._stop.is_set()
+    assert not p.sampling and p.app is None and p._monitor is None and first._stop.is_set() and not p.watching
     p.attach(App(), None)
     assert p.sampling and p.monitor is not first  # a fresh sampler: a stopped one never starts again
     p.detach()
@@ -154,6 +193,140 @@ def test_the_command_line(tmp_path, monkeypatch, capsys):
     assert cli.main(["view"], pause=lambda s: later(s)) == 0 and "machine" in json.loads(capsys.readouterr().out)
     assert cli.main(["week"]) == 2 and cli.main(["view", "week"]) == 2
     assert capsys.readouterr().err.count("python -m plugin_platform_hw_stats status | view") == 2
+
+
+def wait_until(test, seconds=5.0):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if test():
+            return True
+        time.sleep(0.02)
+    return test()
+
+
+class App:
+    NAME = "platform"
+
+
+def test_the_ports_chosen_are_read_through_the_login(tmp_path):
+    p, _ = stand_in(tmp_path)
+    assert [k.name for k in p.keys] == ["HW_STATS_PORTS"] and p.keys[0].pair == "hw-stats-ports" and not p.keys[0].secret
+    p.login = EnvironmentLogin(env={"HW_STATS_PORTS": "443, 25 8765"})  # the platform's login (the login app's database later)
+    assert p.selected() == ((25, 443, 8765), True, None)
+    s = p.status()
+    assert s["ports"] == "25, 443, 8765 (Liminal's charts) (HW_STATS_PORTS)"
+    assert [r[0] if isinstance(r[0], str) else r[0]["text"] for r in s["tables"][1]["rows"]] == ["25", "443", "8765"]
+    p.login = EnvironmentLogin(env={"HW_STATS_PORTS": "25, mail"})
+    assert p.selected() == ((8765, 8775, 8785, 8795, 8796), False,
+                            "HW_STATS_PORTS: not a port: 'mail' (a number, or a range as 8765-8768); Liminal's own ports are listed instead")
+    assert p.status()["problem"].startswith("HW_STATS_PORTS: not a port")
+
+    class Unanswering(EnvironmentLogin):
+        def variables(self, wanted):
+            raise ConnectionError("the login app is not answering")
+    p.login = Unanswering()
+    assert p.selected()[2] == "HW_STATS_PORTS could not be read from the login (ConnectionError): Liminal's own ports are listed"
+
+
+def test_the_public_address_is_read_while_attached_and_when_asked(tmp_path):
+    asked = []
+
+    def resolve(version):
+        asked.append(version)
+        return resolved(version)
+    p, _ = stand_in(tmp_path, resolve=resolve)
+    assert p.status()["publicAddress"].startswith("not read yet") and asked == []  # nothing asked while not attached
+    p.attach(App(), None)
+    try:
+        assert wait_until(lambda: p.status()["publicAddress"].startswith(HOME)) and p.watching
+        s = p.status()
+        assert s["publicAddress"].startswith(f"{HOME} · OpenDNS, ") and asked[:2] == [4, 6]
+        assert s["publicIpv6"] == "none · neither OpenDNS nor Google answered with a public IPv6 address"
+        assert p.ask("public_address") == {
+            "said": f"this network's public address is {HOME}", "ok": True, "ipv4": HOME, "ipv6": None,
+            "lines": [f"IPv4: {HOME} (OpenDNS)", "IPv6: none (neither OpenDNS nor Google answered with a public IPv6 address)"]}
+        assert p.status()["forms"][0]["fields"][2]["value"] == HOME  # the form shows the address it will check
+    finally:
+        p.detach()
+    assert not p.watching
+
+    def failing(version):
+        raise OSError("no nslookup here")
+    q, _ = stand_in(tmp_path / "q", resolve=failing)
+    a = q.ask("public_address")
+    assert a["ok"] is False and a["said"] == "no public IPv4 address was found (the lookup failed (OSError))"
+
+
+def test_ports_checked_from_the_internet_and_out_kept_for_the_table(tmp_path):
+    checker, tried = Checker({8765: "open", 443: "closed"}), []
+
+    def connect(host, port, timeout):
+        tried.append((host, port))
+        if port == 25:
+            raise TimeoutError("timed out")
+    p, _ = stand_in(tmp_path, checker=checker, connect=connect)
+    rep = p.ask("check_ports", "8765 443 25", "both", HOME)
+    assert checker.asked == [(HOME, (25, 443, 8765))]  # this network's own address, the ports asked
+    assert tried[0] == ("portquiz.net", 80) and sorted(tried[1:]) == [("portquiz.net", 25), ("portquiz.net", 443), ("portquiz.net", 8765)]
+    assert rep["said"] == f"3 ports checked from the internet at {HOME}: 1 open, 1 closed, 1 blocked; out from this machine: 2 open, 1 blocked"
+    assert rep["lines"][0] == ("25 · from the internet: blocked, as the stand-in says · out: blocked, no answer from portquiz.net in 5 s "
+                               "(dropped on the way out: a firewall or the ISP) · here: free, nothing listens on it here")
+    assert rep["lines"][2].startswith("8765 (Liminal's charts) · from the internet: open") and rep["lines"][2].endswith(
+        "here: listening, Chart app · port 8765 (pid 4242), this machine only")
+    assert rep["ok"] is False and rep["lines"][-1].startswith("Liminal's charts page answers from the internet on 8765")
+    assert rep["ports"]["8765"]["in"]["state"] == "open" and rep["ports"]["8765"]["here"]["state"] == "listening"
+    s = p.status()
+    rows = {r[0] if isinstance(r[0], str) else r[0]["text"]: r for r in s["tables"][1]["rows"]}
+    assert list(rows) == ["25", "443", "8765", "8775", "8785", "8795", "8796"]  # the ports chosen and the ports checked
+    assert rows["443"][2]["text"] == "closed" and rows["25"][3]["text"] == "blocked" and rows["8775"][2] == {"text": "–", "sub": "not checked"}
+    assert rows["443"][2]["sub"].startswith("as the stand-in says · ")  # when it was checked
+    assert s["problem"] == "Liminal's charts page answers from the internet on port 8765: Liminal's pages are for this machine only"
+    out = p.ask("check_ports", None, "out")  # the ports chosen, out only
+    assert out["said"] == "5 ports checked out from this machine: 5 open" and out["ok"] is True and len(checker.asked) == 1
+    json.dumps(s)
+
+
+def test_a_check_refused_or_failed_says_why_and_asks_nothing(tmp_path):
+    import inspect
+
+    checker = Checker({})
+    p, _ = stand_in(tmp_path, checker=checker)
+    [form] = p.status()["forms"]
+    assert [f["name"] for f in form["fields"]] == list(inspect.signature(p.check_ports).parameters) == ["ports", "where", "address"]
+    assert [c["value"] for c in form["fields"][1]["choices"]] == ["internet", "out", "both"] and form["fields"][1]["value"] == "internet"
+    assert form["fields"][2]["type"] == "fixed" and form["fields"][2]["when"] == {"where": ["internet", "both"]}
+    assert "check-host.net is given this network's public address and these ports" in form["confirm"]["words"]
+    with pytest.raises(ValueError, match="from the internet, out or both, not 'sideways'"):
+        p.ask("check_ports", "80", "sideways")
+    with pytest.raises(ValueError, match="not a port"):
+        p.ask("check_ports", "http", "internet")
+    with pytest.raises(ValueError, match=f"this network's public address is {HOME} now, not 203.0.113.9: check again"):
+        p.ask("check_ports", "80", "internet", "203.0.113.9")
+    nowhere, _ = stand_in(tmp_path / "b", resolve=lambda v: (None, f"neither OpenDNS nor Google answered with a public IPv{v} address"),
+                          checker=checker)
+    with pytest.raises(RuntimeError, match=r"could not be read \(neither OpenDNS .*nothing was asked of check-host.net"):
+        nowhere.ask("check_ports", "80")
+    assert checker.asked == []  # nothing asked of check-host.net
+
+
+def test_the_command_line_reads_the_address_and_the_ports(tmp_path, monkeypatch, capsys):
+    p, _ = stand_in(tmp_path, checker=Checker({443: "open", 8765: "open"}), connect=lambda host, port, timeout: None)
+    monkeypatch.setattr(cli, "MACHINE", p)
+    assert cli.main(["ip"]) == 0
+    assert capsys.readouterr().out.splitlines() == [f"this network's public address is {HOME}", f"  IPv4: {HOME} (OpenDNS)",
+                                                    "  IPv6: none (neither OpenDNS nor Google answered with a public IPv6 address)"]
+    assert cli.main(["ports", "8765", "443"]) == 0  # here only: nothing sent
+    assert capsys.readouterr().out.splitlines() == ["443: free: nothing listens on it here",
+                                                    "8765: listening: Chart app · port 8765 (pid 4242), this machine only"]
+    assert cli.main(["ports", "443", "--where", "internet"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == f"1 port checked from the internet at {HOME}: 1 open" and out[1].startswith("  443 · from the internet: open")
+    assert cli.main(["ports", "--where", "out"]) == 0 and "5 ports checked out from this machine: 5 open" in capsys.readouterr().out
+    assert cli.main(["ports", "8765", "--where", "internet"]) == 1  # Liminal's own page open from the internet: not all right
+    assert "8765" in capsys.readouterr().out
+    assert cli.main(["ports", "--where", "sideways"]) == 2 and cli.main(["ports", "mail"]) == 2 and cli.main(["ip", "now"]) == 2
+    err = capsys.readouterr().err
+    assert "refused: not a port: 'mail'" in err and err.count("python -m plugin_platform_hw_stats status | view") == 2
 
 
 def test_this_machines_own_figures(tmp_path):

@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plugin-platform-hw-stats"
-version = "0.1.1"  # the plugin's own release (CHANGELOG.md); the app shows it on the Plugins view
-description = "Hardware stats for Liminal: this machine's processor, memory, network, disks and data files, and every Liminal app's processes, on Windows and Linux alike."
+version = "0.2.0"  # the plugin's own release (CHANGELOG.md); the app shows it on the Plugins view
+description = "Hardware stats for Liminal: this machine's processor, memory, network, disks and data files, and every Liminal app's processes, on Windows and Linux alike; this network's public address and its ports, checked when asked."
 readme = "README.md"
 requires-python = ">=3.10"
-# the library it plugs into (the machine kind: liminal_libs.machines, plugin API 2.1; the Linux probe since 1.22.0)
-dependencies = ["liminal-libs>=1.26.0"]
+# the library it plugs into (the machine kind: liminal_libs.machines, plugin API 2.1; the Linux probe since 1.22.0;
+# dns.public_address, ports and the probes' program_names since 1.29.0)
+dependencies = ["liminal-libs>=1.29.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
