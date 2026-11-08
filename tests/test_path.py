@@ -202,7 +202,7 @@ def test_a_port_that_listens_on_this_machine_only_is_said_so(tmp_path):
 def test_the_page_draws_each_hop_as_it_goes_and_the_traffic_seen(tmp_path):
     w = World()
     p = plugin(tmp_path, w)
-    p._rt.path = PathRun(8795, True, 1.0, stage="router", lan=LAN, gateway=GATEWAY, public=HOME, listening="ours")
+    p._rt.path = PathRun(8795, True, 1_800_020_000.0, stage="router", lan=LAN, gateway=GATEWAY, public=HOME, listening="ours")
     view = p.status()["paths"][0]
     assert view["running"] and [n["state"] for n in view["nodes"]] == ["idle", "checking", "done"]
     assert [lk["state"] for lk in view["links"]] == ["idle", "checking"] and view["said"] == "checking the router…"

@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
@@ -40,7 +40,7 @@ from liminal_libs.sources.keys import KeyVar
 
 from .network import OUT_HOST, PUBLIC_SERVERS, TRACE_TO, CheckHost, Net
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}
@@ -114,8 +114,14 @@ def when(iso) -> str:
 
 
 def clock(seconds: float) -> str:
-    """A time (seconds since 1970) as this machine's local time."""
-    return datetime.fromtimestamp(seconds).astimezone().strftime("%b %d %H:%M") if seconds else "–"
+    """A time (seconds since 1970) as this machine's local time (in UTC where Windows cannot localize it: a time
+    near 1970, which Python before 3.13 cannot take to local time there)."""
+    if not seconds:
+        return "–"
+    try:
+        return datetime.fromtimestamp(seconds).astimezone().strftime("%b %d %H:%M")
+    except (OSError, OverflowError, ValueError):
+        return datetime.fromtimestamp(seconds, timezone.utc).strftime("%b %d %H:%M UTC")
 
 
 def plural(n: int, word: str) -> str:

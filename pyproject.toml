@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plugin-platform-hw-stats"
-version = "0.3.0"  # the plugin's own release (CHANGELOG.md); the app shows it on the Plugins view
+version = "0.3.1"  # the plugin's own release (CHANGELOG.md); the app shows it on the Plugins view
 description = "Hardware stats for Liminal: this machine's processor, memory, network, disks and data files, and every Liminal app's processes, on Windows and Linux alike; this network's public address and its ports, checked when asked."
 readme = "README.md"
 requires-python = ">=3.10"

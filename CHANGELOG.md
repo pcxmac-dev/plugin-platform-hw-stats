@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 (2026-11-08)
+
+A time near 1970 is said in UTC where Windows cannot take it to local time (Python before 3.13: CI's
+windows-latest 3.12 failed on the path test's start time); the path test starts at a real time.
+
 ## 0.3.0 (2026-11-08)
 
 A port's way in, hop by hop, drawn as it goes (the user: "the port checker doesn't seem to work, i have this computer as

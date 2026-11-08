@@ -404,3 +404,9 @@ def test_this_machines_own_figures(tmp_path):
         assert s["system"] in ("Windows", "Linux") and "processor" in s and "memory" in s
         assert s["summary"].startswith("CPU ") and "of" in s["processor"]
         assert [x["key"] for x in s["charts"]["charts"]][:2] == ["cpu", "memory"]
+
+
+def test_a_time_near_1970_is_said_without_failing():
+    """Windows cannot take a time near 1970 to local time on Python before 3.13 (CI's windows-latest 3.12 showed it):
+    it is said in UTC there, never raised."""
+    assert hw.clock(0) == "–" and isinstance(hw.clock(1.0), str) and hw.clock(1.0)
