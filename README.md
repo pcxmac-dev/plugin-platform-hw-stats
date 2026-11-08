@@ -57,6 +57,20 @@ The user (2026-11-08): "lets make sure platform hw stats is able to get the curr
   - *Out from this machine*: a connection to portquiz.net (it answers on every TCP port) on each port, its port 80
     first: an ISP blocking port 25, say, shows as blocked.
 
+- **Check the way in** (a Way in button on each Ports row, or under the table): one port, hop by hop, drawn on the page
+  as it goes (liminal-platform 0.8.0): **this computer** (what listens on the port; when nothing does, the check
+  listens on it itself, on every address, until it ends; a connection to the computer's own address on the network),
+  **the router** (a ping; the first routers toward 1.1.1.1, each said public or private; its WAN address when it
+  answers UPnP; a connection to this network's public address, seen coming back to this computer when the router loops
+  back to its DMZ host), then **the internet** (portchecker.io, else check-host.net, connecting to the public address).
+  Throughout, the port's TCP packets are watched at the network adapter: a tcpdump in Python (liminal-libs' capture
+  over Npcap's wpcap.dll, installed with Wireshark or on its own; no administrator needed unless Npcap was installed for
+  administrators only; libpcap as root on Linux). The packets show where the traffic stops: nothing arriving (the
+  ISP's NAT, or the router not forwarding it), arriving but unanswered (this computer's firewall, or nothing
+  listening), refused, or accepted; the Traffic table lists them.
+  Listening: Windows may ask once whether Python may accept connections. This computer may be the DMZ host: allowing
+  Python on public networks lets the internet reach Python programs here while they listen.
+
 Nothing on this machine is changed by a check. The services' hosts are this plugin's (`network.py`): the library
 names none.
 
@@ -66,7 +80,8 @@ names none.
 monitor's answer, the shape the charts app's `/api/resources` gives), `charts(span)` (the charts alone; `span`:
 `recent` or `day`), `public_address()` (read now), `check_ports(ports, where, address)` (`where`: `internet`, `out`
 or `both`; `address`, when given, must still be this network's), `choose_ports(ports)` (`liminal`, `web`, `mail`,
-`remote`, `setting`, `chosen` or ports as typed), `refresh_ports()` (what listens, read now).
+`remote`, `setting`, `chosen` or ports as typed), `refresh_ports()` (what listens, read now), `check_path(port, listen)`
+(the way in, hop by hop, on a thread: the status's `paths` and the Traffic table follow it).
 
 ## Its setting
 
@@ -83,6 +98,7 @@ python -m plugin_platform_hw_stats view
 python -m plugin_platform_hw_stats ip
 python -m plugin_platform_hw_stats ports
 python -m plugin_platform_hw_stats ports 25 80 443 --where out
+python -m plugin_platform_hw_stats path 8795 --no-listen
 ```
 
 `status`, `view` and `charts` take two samples a second apart, so the rates are there. `ip` reads the public address

@@ -24,23 +24,23 @@ import re
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
-from liminal_libs import dns
+from liminal_libs import dns, netpath
 from liminal_libs.apps import EnvironmentLogin
 from liminal_libs.machines.firewall import app_ports
 from liminal_libs.machines.plugin import MachinePlugin
-from liminal_libs.ports import MAX_PORTS, Outcome, here as listening_here, listening_pids, parse_ports, reach_out, tally
+from liminal_libs.ports import MAX_PORTS, Outcome, attempt, here as listening_here, listening_pids, parse_ports, reach_out, tally
 from liminal_libs.ports import connect as connect_out
 from liminal_libs.resources import Monitor, default_probe, framework_role, is_framework
 from liminal_libs.sources.keys import KeyVar
 
-from .network import OUT_HOST, PUBLIC_SERVERS, CheckHost
+from .network import OUT_HOST, PUBLIC_SERVERS, TRACE_TO, CheckHost, Net
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}
@@ -57,6 +57,9 @@ PRESETS = {  # the ports the Ports table may list, chosen on the page beside Lim
     "remote": ("Remote access", (22, 3389)),
 }
 KEPT = "until the platform restarts (the login will keep it once it holds the plugins' settings)"
+SETTLE_S = 0.3  # a listener or a connection given time to land before it is looked for
+LATE_S = 1.5  # packets of the check from the internet still on their way, waited for
+PACKETS_SHOWN = 40  # the path check's traffic rows shown
 
 
 class Chosen(NamedTuple):
@@ -352,6 +355,114 @@ def report(chosen, where: str, public: Address | None, results: dict, here: dict
             "ports": {str(p): {**{k: o.as_dict() for k, o in results[p].items()}, "here": here[p].as_dict()} for p in chosen}}
 
 
+@dataclass
+class PathRun:
+    """One check of a port's way in from the internet (the user, 2026-11-08: "validate the computer, the router/gateway
+    to the computer, then the internet to the computer, and graphically show traffic moving between the three"), as it
+    goes and once done: what each hop showed, the packets seen, the conclusion."""
+    port: int
+    listen: bool
+    started: float
+    stage: str = "starting"  # starting, computer, router, internet, done
+    running: bool = True
+    lines: list = field(default_factory=list)  # what was found, in order
+    lan: str | None = None  # this computer's address on its network
+    gateway: str | None = None
+    public: str | None = None
+    here: Outcome | None = None  # what listened before the check
+    listening: str = ""  # who listens during it: ours (the check's own listener), theirs, "" nobody
+    local_only: bool = False  # what listens does so on this machine's own address only
+    lan_try: Outcome | None = None  # a connection to this computer's address on its network
+    gateway_ms: float | None = None
+    hops: list | None = None
+    wan: str | None = None  # the router's WAN address, when UPnP gives it
+    hairpin: Outcome | None = None  # a connection to the public address from here, through the router
+    came_back: bool = False  # ... seen arriving back at this computer (the router's NAT loopback to its DMZ)
+    probe: Outcome | None = None  # the check from the internet
+    prober: str = ""
+    capture_why: str = ""  # why packets were not watched ("" when they were)
+    packets: list = field(default_factory=list)
+    from_outside: list = field(default_factory=list)  # connections asked from the internet, seen arriving
+    answer: str = ""  # this computer's answer to them: accepted, refused, "" none
+    arrivals: list = field(default_factory=list)  # connections that reached the check's own listener
+    states: dict = field(default_factory=dict)  # each hop's and link's state once judged
+    said: str = ""
+    finished: float = 0.0
+    live: object = None  # the capture while it runs
+
+
+def local_words(o: Outcome) -> str:
+    """A connection arriving at this computer, in words (no answer here is this computer's firewall dropping it)."""
+    return {"open": "accepted it", "closed": "refused it: nothing listens on its network address",
+            "blocked": "did not answer: Windows drops what nothing answers, or its firewall stopped it"}.get(o.state, o.said)
+
+
+def judge(run: PathRun) -> tuple[dict, str]:
+    """Each hop's and link's state (ok, warn, fail, unknown) and the conclusion, from what the path check found."""
+    hop2 = run.hops[1] if run.hops and len(run.hops) > 1 else None
+    behind = netpath.kind(run.wan) in ("private", "shared") if run.wan else netpath.kind(hop2) in ("private", "shared")
+    s = {"computer": "warn", "router": "warn", "internet": "unknown", "internet-router": "unknown", "router-computer": "unknown"}
+    if run.listening == "ours" or (run.listening == "theirs" and not run.local_only):
+        s["computer"] = "ok" if run.lan_try and run.lan_try.state == "open" else "warn"
+    if run.wan and netpath.kind(run.wan) != "public":
+        s["router"] = "fail"
+    elif run.came_back:
+        s["router"], s["router-computer"] = "ok", "ok"
+    p, watched = run.port, not run.capture_why
+    if run.probe is None or run.probe.state == "failed":
+        said = f"Port {p} could not be checked from the internet: {run.probe.why if run.probe else 'no public address'}."
+        return s, said
+    if run.probe.state == "open" or run.answer == "accepted":
+        s.update({"internet": "ok", "internet-router": "ok", "router-computer": "ok", "computer": "ok"})
+        if s["router"] != "fail":
+            s["router"] = "ok"
+        return s, f"Port {p} is reachable from the internet: {run.prober} connected to {run.public}:{p}, through the router, to this computer."
+    if watched and run.from_outside:
+        s.update({"internet-router": "ok", "router-computer": "ok", "router": "ok" if s["router"] != "fail" else "fail",
+                  "internet": "warn", "computer": "fail" if run.listening else "warn"})
+        reach = f"Traffic from the internet reaches this computer on port {p} (through the router), "
+        if run.answer == "refused":
+            return s, reach + "but nothing accepts it: the connection is refused (nothing listens on every address)."
+        if not run.listening:
+            return s, (reach + "but nothing listens on it, and Windows drops what nothing answers. Check again listening on "
+                       "it, to see whether its firewall lets the traffic in.")
+        who = "the check's own listener" if run.listening == "ours" else (run.here.why if run.here else "what listens")
+        return s, (reach + f"but nothing answers it: this computer's firewall drops it before it reaches {who} (no rule "
+                   "lets the port in, or the program is not allowed on this network's profile).")
+    s["internet"] = "fail"
+    if not watched:
+        return s, (f"Port {p} is not reachable from the internet ({run.probe.why}); where the traffic stops is not known, since "
+                   f"packets were not watched ({run.capture_why}).")
+    if run.wan and behind:
+        s["internet-router"] = "fail"
+        return s, (f"Nothing from the internet reached this computer on port {p}. Your router's WAN address is {run.wan}, a "
+                   f"{netpath.kind(run.wan)} one: your ISP's NAT (CGNAT) stands between the internet and your router, so its "
+                   "DMZ never sees the traffic. A public address from the ISP (or IPv6) is the way out of it.")
+    if behind:
+        s["internet-router"] = "warn"
+        s["router-computer"] = "warn"
+        return s, (f"Nothing from the internet reached this computer on port {p}. After your router comes {hop2}, a "
+                   f"{netpath.kind(hop2)} address: if the router's own WAN address (on its status page) is private too (10.x, "
+                   "172.16-31.x, 192.168.x, 100.64-127.x), your ISP's NAT stands between the internet and the router; if it "
+                   "is public, the router does not forward the port here (its DMZ or a port forward), or the ISP blocks it.")
+    s["router-computer"] = "fail"
+    return s, (f"Nothing from the internet reached this computer on port {p}: the router does not forward it here (its DMZ "
+               "or a port forward), or the ISP blocks the port.")
+
+
+def packet_role(pk, run: PathRun) -> str:
+    """What a packet of the path check was, in words."""
+    if pk.dst == run.lan and pk.dport == run.port:
+        if netpath.kind(pk.src) == "public" and pk.src != run.public:
+            return "from the internet"
+        return "back through the router" if pk.src in (run.gateway, run.lan, run.public) else "to this computer"
+    if pk.src == run.lan and pk.sport == run.port:
+        return "this computer's answer"
+    if pk.dst == run.public and pk.dport == run.port:
+        return "out to the public address"
+    return ""
+
+
 class _Runtime:
     """What the plugin keeps while it lives, shared by its copies (the registry hands out a shallow one): the public
     addresses, the ports' last checks, what listened when read last, the thread reading the address."""
@@ -364,6 +475,7 @@ class _Runtime:
         self.last: tuple[int, ...] = ()  # the ports of the last check (listed beside the ports chosen)
         self.choice: str | None = None  # the ports listed as chosen on the page (a Chosen source); None: not chosen
         self.custom: tuple[int, ...] = ()  # the ports typed on the page
+        self.path: PathRun | None = None  # the last check of a port's way in (or the one running)
         self.here: tuple[float, tuple[int, ...], dict] | None = None  # (when, the ports, what listens on each)
         self.stop: threading.Event | None = None
         self.thread: threading.Thread | None = None
@@ -379,10 +491,10 @@ class HwStatsPlugin(MachinePlugin):
     api = "2.1"
     order = 730
     ICON = "gauge"
-    HOOKS = (*MachinePlugin.HOOKS, "view", "charts", "public_address", "check_ports", "choose_ports", "refresh_ports")
+    HOOKS = (*MachinePlugin.HOOKS, "view", "charts", "public_address", "check_ports", "choose_ports", "refresh_ports", "check_path")
     keys = KEYS
 
-    def __init__(self, probe=None, data: Path | None = None, resolve=None, checker=None, connect=None, **monitor_options):
+    def __init__(self, probe=None, data: Path | None = None, resolve=None, checker=None, connect=None, net=None, **monitor_options):
         self._probe = probe  # the probe (resources.WindowsProbe, LinuxProbe); this system's, every Liminal app's, unless given
         self._data = data  # the data folder whose files are listed; the framework's (layout.data_dir()) unless given
         self._options = monitor_options  # clock, wall, cpu_clock: a test's
@@ -391,6 +503,7 @@ class HwStatsPlugin(MachinePlugin):
         self._resolve = resolve  # version -> (address, whose): dns.public_address over network.PUBLIC_SERVERS unless given
         self._checker = checker  # the check from the internet (network.CheckHost unless given)
         self._connect = connect  # one connection out (liminal_libs.ports.connect unless given)
+        self._net = net if net is not None else Net()  # the path check's route, ping, hops, capture, listener, probe
         self._wall = monitor_options.get("wall") or time.time
         self._rt = _Runtime()
 
@@ -616,6 +729,187 @@ class HwStatsPlugin(MachinePlugin):
             self._rt.last = chosen
         return report(chosen, where, public, results, self.listening(chosen, view))
 
+    # -- a port's way in, hop by hop -----------------------------------------------------------------------------
+    def check_path(self, port, listen="yes") -> dict:
+        """A port's way in checked hop by hop on a thread of its own (the page draws it as it goes): this computer
+        (what listens, or the check's own listener when nothing does and `listen` is yes; a connection to its address
+        on the network), the router (a ping, the first hops, its WAN address over UPnP, a connection to the public
+        address turned back to this computer), then the internet (portchecker.io, else check-host.net, connecting to
+        the public address); the port's packets watched at the network adapter throughout (Npcap or libpcap)."""
+        ports = parse_ports(port)
+        if len(ports) != 1:
+            raise ValueError("the way in is checked one port at a time")
+        listen = str(listen if listen is not None else "yes").strip().lower() not in ("no", "false", "0", "off")
+        with self._rt.lock:
+            if self._rt.path is not None and self._rt.path.running:
+                raise ValueError(f"the way in to port {self._rt.path.port} is being checked: wait for it to end")
+            run = self._rt.path = PathRun(ports[0], listen, self._wall())
+        threading.Thread(target=self._run_path, args=(run,), name=f"hw-stats-path-{ports[0]}", daemon=True).start()
+        return {"said": f"checking the way in to port {ports[0]}: this computer, the router, then the internet",
+                "lines": ["the page draws it as it goes (about fifteen seconds)"], "ok": True}
+
+    def _run_path(self, run: PathRun) -> None:
+        net, wall, say = self._net, self._wall, run.lines.append
+        connect = self._connect or connect_out
+        cap = lis = None
+        try:
+            route = net.route()
+            run.lan, run.gateway = route.address, route.gateway
+            if not run.lan:
+                raise RuntimeError("this computer's address on its network could not be read")
+            run.public = self._read_public()[4].address
+            try:
+                cap = run.live = net.capture(run.lan, [run.port])
+                say(f"watching port {run.port}'s packets at the network adapter")
+            except Exception as e:  # noqa: BLE001 - CaptureError, OSError: the check goes on without them
+                run.capture_why = str(e) or type(e).__name__
+                say(f"port {run.port}'s packets are not watched: {run.capture_why}")
+            # 1. this computer
+            run.stage = "computer"
+            run.here = here = self.listening((run.port,), fresh=True)[run.port]
+            if here.state == "listening":
+                run.listening = "theirs"
+                run.local_only = all(d.endswith("this machine only") for d in here.detail)
+                say(f"this computer: {here.why}")
+            elif run.listen:
+                try:
+                    lis = net.listener(run.port)
+                    run.listening = "ours"
+                    say(f"this computer: nothing listened on {run.port}, so the check listens on it (every address) until it ends")
+                except OSError as e:
+                    say(f"this computer: nothing listens on {run.port}, and the check could not listen on it ({e.strerror or e})")
+            else:
+                say(f"this computer: nothing listens on {run.port} (the check does not listen on it)")
+            time.sleep(SETTLE_S)
+            run.lan_try = attempt(run.port, run.lan, timeout=2.0, connect=connect, clock=wall)
+            say(f"a connection to {run.lan}:{run.port}, this computer's address on its network: " + local_words(run.lan_try))
+            # 2. the router
+            run.stage = "router"
+            if run.gateway:
+                run.gateway_ms = net.ping(run.gateway)
+                say(f"the router {run.gateway} " + (f"answered a ping in {run.gateway_ms:g} ms" if run.gateway_ms is not None
+                                                     else "did not answer a ping (some routers do not)"))
+            run.hops = net.hops()
+            if run.hops:
+                say(f"the way out toward {TRACE_TO}: " + ", then ".join(f"{h} ({netpath.kind(h)})" if h else "no answer" for h in run.hops))
+            run.wan = net.wan(run.lan)
+            say(f"the router's own WAN address (UPnP): {run.wan}, {netpath.kind(run.wan)}" if run.wan
+                else "the router's own WAN address: not given (its UPnP is off, or it did not answer)")
+            if run.public:
+                arrived, seen = len(lis.arrivals) if lis else 0, len(cap.packets) if cap else 0
+                run.hairpin = attempt(run.port, run.public, timeout=3.0, connect=connect, clock=wall)
+                time.sleep(SETTLE_S)
+                back = (lis.arrivals[arrived:] if lis else []) + [
+                    pk for pk in (cap.packets[seen:] if cap else []) if pk.syn and pk.dst == run.lan and pk.dport == run.port]
+                run.came_back = bool(back)
+                say(f"a connection to {run.public}:{run.port}, this network's public address: "
+                    + ("the router turned it back to this computer, which " + local_words(run.hairpin) if run.came_back else
+                       f"{run.hairpin.state}; it did not come back to this computer (many routers do not loop back)"))
+            # 3. the internet
+            run.stage = "internet"
+            if run.public:
+                seen = len(cap.packets) if cap else 0
+                run.probe, run.prober = net.probe(run.public, run.port)
+                say(f"from the internet ({run.prober or 'no service'}): {run.probe.said}")
+                time.sleep(LATE_S)
+                new = cap.packets[seen:] if cap else []
+                run.from_outside = [pk for pk in new if pk.syn and pk.dst == run.lan and pk.dport == run.port
+                                    and netpath.kind(pk.src) == "public" and pk.src != run.public]
+                sources = {pk.src for pk in run.from_outside}
+                answers = [pk for pk in new if pk.src == run.lan and pk.sport == run.port and pk.dst in sources]
+                run.answer = ("accepted" if any(pk.flags.startswith("SYN ACK") for pk in answers) else
+                              "refused" if any("RST" in pk.flags for pk in answers) else "")
+                if not run.capture_why:
+                    say(f"seen arriving from the internet: {len(run.from_outside)} connection request(s)"
+                        + (f" from {', '.join(sorted(sources))}" if sources else "")
+                        + (f"; this computer {run.answer} them" if run.answer else "; this computer did not answer" if sources else ""))
+            else:
+                run.probe = Outcome("failed", "failed: this network's public address is not known", wall())
+        except Exception as e:  # noqa: BLE001 - a fault ends the check, said
+            say(f"the check stopped: {e}")
+            run.probe = run.probe or Outcome("failed", f"failed: the check stopped ({e})", wall())
+        finally:
+            if lis is not None:
+                run.arrivals = lis.stop()
+            if cap is not None:
+                run.packets = cap.stop()
+            run.live = None
+            run.states, run.said = judge(run)
+            run.finished, run.stage, run.running = wall(), "done", False
+
+    def _path_view(self) -> dict | None:
+        """The path check for the platform's page (liminal-platform 0.8.0, status.paths): three hops and the links
+        between them, each with its state (idle, checking, ok, warn, fail, unknown), what it found beneath."""
+        with self._rt.lock:
+            run = self._rt.path
+        if run is None:
+            return None
+        states = dict(run.states) if not run.running else {}
+        if run.running:  # the hop being checked, and the links its traffic takes
+            order = ("computer", "router", "internet")
+            at = order.index(run.stage) if run.stage in order else -1
+            for i, hop in enumerate(order):
+                states[hop] = "checking" if i == at else ("done" if i < at else "idle")
+            states["router-computer"] = "checking" if run.stage in ("router", "internet") else "idle"
+            states["internet-router"] = "checking" if run.stage == "internet" else "idle"
+        hop2 = run.hops[1] if run.hops and len(run.hops) > 1 else None
+        listens = {"ours": "the check listens on it", "theirs": (run.here.why if run.here else "")}.get(run.listening, "nothing listens on it")
+        router_sub = " · ".join(x for x in (
+            run.gateway or "", f"ping {run.gateway_ms:g} ms" if run.gateway_ms is not None else "",
+            f"WAN {run.wan}" if run.wan else (f"next {hop2} ({netpath.kind(hop2)})" if hop2 else "")) if x)
+        nodes = [{"id": "internet", "title": "The internet", "state": states.get("internet", "idle"),
+                  "sub": " · ".join(x for x in (run.public or "", run.prober) if x)},
+                 {"id": "router", "title": "Router", "state": states.get("router", "idle"), "sub": router_sub},
+                 {"id": "computer", "title": "This computer", "state": states.get("computer", "idle"),
+                  "sub": " · ".join(x for x in (f"{run.lan}:{run.port}" if run.lan else f"port {run.port}", listens) if x)}]
+        links = [{"from": "internet", "to": "router", "state": states.get("internet-router", "idle"), "title": "the internet to the router"},
+                 {"from": "router", "to": "computer", "state": states.get("router-computer", "idle"), "title": "the router to this computer"}]
+        return {"id": f"path-{run.port}", "title": f"Port {run.port}: the way in from the internet", "running": run.running,
+                "stage": run.stage, "said": run.said if not run.running else "checking " + {
+                    "computer": "this computer", "router": "the router", "internet": "the way in from the internet"}.get(run.stage, "what is needed") + "…",
+                "lines": list(run.lines), "nodes": nodes, "links": links,
+                "at": clock(run.started) + (f", done {clock(run.finished)}" if run.finished else "")}
+
+    def _traffic_table(self) -> dict | None:
+        """The path check's packets on its port (seen at the network adapter): when, from, to, flags, what each was."""
+        with self._rt.lock:
+            run = self._rt.path
+        if run is None:
+            return None
+        packets = run.live.packets if run.running and run.live is not None else run.packets
+        if not packets and run.capture_why:
+            return {"title": f"Traffic on port {run.port}", "columns": [{"title": "Packets"}], "rows": [],
+                    "empty": f"Not watched: {run.capture_why}"}
+        rows = [[datetime.fromtimestamp(pk.at).strftime("%H:%M:%S.%f")[:-3], f"{pk.src}:{pk.sport}", f"{pk.dst}:{pk.dport}", pk.flags,
+                 packet_role(pk, run)] for pk in packets[-PACKETS_SHOWN:]]
+        return {"title": f"Traffic on port {run.port}", "note": "TCP packets seen at the network adapter (Npcap), before the firewall decides",
+                "empty": "No packet on the port yet." if run.running else "No packet on the port was seen.",
+                "columns": [{"title": "When"}, {"title": "From"}, {"title": "To"}, {"title": "Flags"}, {"title": "What"}], "rows": rows}
+
+    def _path_form(self, chosen: Chosen, here: dict) -> dict:
+        """Check the way in (status.forms): check_path's arguments in order, the confirmation saying what is asked of
+        whom (the router, the services) and what listening means on a DMZ host."""
+        free = [p for p in chosen.ports if (here.get(p) is not None and here[p].state == "free")]
+        return {
+            "id": "path", "hook": "check_path", "title": "Check the way in",
+            "note": "One port: this computer, the router, then the internet; the page draws the traffic as it goes.",
+            "fields": [
+                {"name": "port", "label": "Port", "type": "number", "required": True, "min": 1, "max": 65535,
+                 "value": (free or list(chosen.ports) or [8795])[0]},
+                {"name": "listen", "label": "While checking", "type": "choice", "value": "yes", "choices": [
+                    {"value": "yes", "title": "Listen on it when nothing does",
+                     "note": "a connection then has somewhere to arrive, and is seen arriving; Windows may ask once whether Python may accept connections"},
+                    {"value": "no", "title": "Do not listen", "note": "only what already listens answers; the packets still show what arrives"}]}],
+            "submit": "Review",
+            "confirm": {"title": "Check the way in to port {port}?",
+                        "words": (f"This computer is checked first, then the router (a ping, the first routers toward {TRACE_TO}, its WAN "
+                                  "address asked over UPnP, a connection to this network's public address), then the internet: "
+                                  "portchecker.io (else check-host.net) connects to this network's public address on the port. "
+                                  "The port's packets are watched at the network adapter meanwhile. Listening: Windows may ask "
+                                  "whether Python may accept connections; this computer is the DMZ host, so allowing it on "
+                                  "public networks lets the internet reach Python programs here while they listen."),
+                        "yes": "Check"}}
+
     def _exposed(self) -> list[str]:
         """Liminal's own pages found answering from the internet (they are for this machine only)."""
         own = own_ports()
@@ -631,7 +925,8 @@ class HwStatsPlugin(MachinePlugin):
             v4, typed = self._rt.public[4].address, self._rt.custom
         own = own_ports()
         rows = [[cell(str(p), whose(own[p]) if p in own else None), outcome_cell(here.get(p), "not read"),
-                 outcome_cell(checked.get(p, {}).get("in")), outcome_cell(checked.get(p, {}).get("out"))] for p in sorted(here)]
+                 outcome_cell(checked.get(p, {}).get("in")), outcome_cell(checked.get(p, {}).get("out")),
+                 {"form": "path", "title": "Way in", "values": {"port": p}, "label": f"Check the way in to port {p}"}] for p in sorted(here)]
         listed = " ".join(map(str, chosen.ports))
         setting = self._setting()[0]
         choices = [{"value": "liminal", "title": "Liminal's own", "note": " ".join(map(str, sorted(own)))},
@@ -643,12 +938,14 @@ class HwStatsPlugin(MachinePlugin):
                 "note": (f"Here: this machine's sockets now. From the internet: check-host.net's servers connecting to {target}. "
                          f"Out: this machine connecting to {OUT_HOST}. Those two only when asked (Check ports)."),
                 "options": [{"title": "Ports listed", "hook": "choose_ports", "value": chosen.source, "choices": choices}],
-                "columns": [{"title": "Port"}, {"title": "Here"}, {"title": "From the internet"}, {"title": "Out from this machine"}],
+                "columns": [{"title": "Port"}, {"title": "Here"}, {"title": "From the internet"}, {"title": "Out from this machine"},
+                            {"title": "Hop by hop"}],
                 "rows": rows,
                 "actions": [{"hook": "refresh_ports", "args": [], "title": "Refresh",
                              "note": "reads what listens on each port now; nothing is sent anywhere"},
                             {"form": "choose", "title": "Other ports…", "values": {"ports": listed}},
-                            {"form": "ports", "title": "Check ports…", "values": {"ports": listed}}]}
+                            {"form": "ports", "title": "Check ports…", "values": {"ports": listed}},
+                            {"form": "path", "title": "Check the way in…"}]}
 
     def _choose_form(self, chosen: Chosen) -> dict:
         """Other ports (liminal-platform 0.7.0: confirm false, since it changes nothing on the machine): the ports the
@@ -704,9 +1001,10 @@ class HwStatsPlugin(MachinePlugin):
             out.update(network)
         here = self.listening(tuple(sorted({*chosen.ports, *last})), view, fresh=False)
         tabs = tables(view)
-        tabs.insert(1, self._ports_table(chosen, here))
-        out.update({"sampling": self.sampling, "tables": tabs, "charts": charts(view),
-                    "forms": [self._ports_form(chosen), self._choose_form(chosen)],
+        tabs[1:1] = [t for t in (self._ports_table(chosen, here), self._traffic_table()) if t]
+        path = self._path_view()
+        out.update({"sampling": self.sampling, "tables": tabs, "charts": charts(view), "paths": [path] if path else [],
+                    "forms": [self._ports_form(chosen), self._choose_form(chosen), self._path_form(chosen, here)],
                     "actions": [{"hook": "public_address", "args": [], "title": "Read the public address again",
                                  "note": "asks OpenDNS (else Google's name server) for this network's address now"}]})
         trouble = ([chosen.problem] if chosen.problem else []) + self._exposed()

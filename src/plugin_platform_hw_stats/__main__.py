@@ -15,7 +15,7 @@ from liminal_libs.ports import parse_ports
 from . import MACHINE, WHERE
 
 USAGE = ("python -m plugin_platform_hw_stats status | view [recent|day] | charts [recent|day] | ip | "
-         "ports [PORTS] [--where here|internet|out|both]")
+         "ports [PORTS] [--where here|internet|out|both] | path PORT [--no-listen]")
 PAUSE_S = 1.0
 
 
@@ -26,6 +26,8 @@ def main(argv: list[str] | None = None, pause=time.sleep) -> int:
         return _ip() if not rest else _usage()
     if what == "ports":
         return _ports(rest)
+    if what == "path":
+        return _path(rest, pause)
     if what not in ("status", "view", "charts") or len(rest) > 1 or (rest and rest[0] not in ("recent", "day")):
         return _usage()
     MACHINE.monitor.sample()
@@ -79,6 +81,31 @@ def _ports(rest: list[str]) -> int:
     for line in rep["lines"]:
         print(f"  {line}")
     return 0 if rep["ok"] else 1
+
+
+def _path(rest: list[str], pause) -> int:
+    """A port's way in checked hop by hop, waited for, said line by line (as the page's Check the way in)."""
+    listen = "--no-listen" not in rest
+    rest = [r for r in rest if r != "--no-listen"]
+    if len(rest) != 1:
+        return _usage()
+    MACHINE.monitor.sample()  # Liminal's programs named by their app
+    try:
+        MACHINE.check_path(rest[0], "yes" if listen else "no")
+    except ValueError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
+    run = MACHINE._rt.path
+    while run.running:
+        pause(0.2)
+    for line in run.lines:
+        print(f"  {line}")
+    traffic = MACHINE._traffic_table()
+    for row in (traffic or {}).get("rows", []):
+        print("    " + "  ".join(str(c) for c in row))
+    print(" · ".join(f"{k} {v}" for k, v in run.states.items()))
+    print(run.said)
+    return 0 if run.states.get("internet") == "ok" else 1
 
 
 if __name__ == "__main__":

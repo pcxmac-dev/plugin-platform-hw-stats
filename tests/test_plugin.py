@@ -116,18 +116,22 @@ def test_the_status_says_the_machine_every_liminal_program_the_disks_and_the_dat
     assert s["ports"] == ("8765 (Liminal's charts), 8775 (Liminal's platform), 8785 (Liminal's integrator), 8795 (Liminal's login), "
                           "8796 (the integrator's login) (Liminal's own: HW_STATS_PORTS is not set)") and "problem" not in s
     programs, ports, disks, folders = s["tables"]  # the disks' space and I/O in one table (the user: "disk io is redundant")
-    assert ports["title"] == "Ports" and [c["title"] for c in ports["columns"]] == ["Port", "Here", "From the internet", "Out from this machine"]
+    assert ports["title"] == "Ports" and [c["title"] for c in ports["columns"]] == ["Port", "Here", "From the internet", "Out from this machine",
+                                                                                     "Hop by hop"]
     assert ports["rows"][0] == [{"text": "8765", "sub": "Liminal's charts"},
                                 {"text": "listening", "sub": "Chart app · port 8765 (pid 4242), this machine only"},
-                                {"text": "–", "sub": "not checked"}, {"text": "–", "sub": "not checked"}]
+                                {"text": "–", "sub": "not checked"}, {"text": "–", "sub": "not checked"},
+                                {"form": "path", "title": "Way in", "values": {"port": 8765}, "label": "Check the way in to port 8765"}]
     assert ports["rows"][1][1] == {"text": "free", "sub": "nothing listens on it here"} and len(ports["rows"]) == 5
     assert ports["rows"][4][0] == {"text": "8796", "sub": "the integrator's login"}
     assert ports["actions"] == [{"hook": "refresh_ports", "args": [], "title": "Refresh", "note": "reads what listens on each port now; nothing is sent anywhere"},
                                 {"form": "choose", "title": "Other ports…", "values": {"ports": "8765 8775 8785 8795 8796"}},
-                                {"form": "ports", "title": "Check ports…", "values": {"ports": "8765 8775 8785 8795 8796"}}]
-    form, choose = s["forms"]
+                                {"form": "ports", "title": "Check ports…", "values": {"ports": "8765 8775 8785 8795 8796"}},
+                                {"form": "path", "title": "Check the way in…"}]
+    form, choose, path = s["forms"]
     assert form["id"] == "ports" and form["hook"] == "check_ports" and form["fields"][0]["value"] == "8765 8775 8785 8795 8796"
     assert choose["id"] == "choose" and choose["hook"] == "choose_ports" and choose["confirm"] is False
+    assert path["id"] == "path" and path["fields"][0]["value"] == 8775 and s["paths"] == []  # the first port nothing listens on
     assert s["actions"] == [{"hook": "public_address", "args": [], "title": "Read the public address again",
                              "note": "asks OpenDNS (else Google's name server) for this network's address now"}]
     assert programs["title"] == "Liminal's programs" and [c["title"] for c in programs["columns"]][:3] == ["Program", "Processes", "CPU"]

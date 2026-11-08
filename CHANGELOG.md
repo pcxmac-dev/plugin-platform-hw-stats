@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 (2026-11-08)
+
+A port's way in, hop by hop, drawn as it goes (the user: "the port checker doesn't seem to work, i have this computer as
+DMZ host so, basically the check needs to validate the computer, the router/gateway to the computer, then the internet
+to the computer, and graphically show traffic moving between the three different checks"; "i don't think the plugin is
+able to check if there is a listener or to listen on the port in order to validate the traffic"; "if there is a
+python-tcpdump that would be good ... as a listener"):
+
+- `check_path(port, listen)` (Check the way in, a Way in button on each Ports row; `path PORT [--no-listen]` on the
+  command line), on a thread of its own: this computer (what listens; the check's own listener on every address when
+  nothing does; a connection to its address on the network), the router (a ping, the first hops toward 1.1.1.1, its
+  WAN address over UPnP, a connection to the public address turned back to this computer), the internet
+  (portchecker.io, else check-host.net). The port's packets are watched at the network adapter meanwhile (liminal-libs
+  1.30.0's capture: Npcap, no administrator needed), so the check says where the traffic stops: never arriving
+  (behind the ISP's NAT, or not forwarded), arriving and dropped by this computer's firewall, refused, or accepted.
+- The platform's page draws it (liminal-platform 0.8.0, status.paths): the internet, the router and this computer,
+  traffic moving along the link being checked, each hop in its state; what each hop showed beneath; the packets in a
+  Traffic table (when, from, to, flags, what each was).
+- portchecker.io first for a check from the internet (asked as "me": its checks of the asker's own address are not
+  logged; check-host.net limited this machine at once); check-host.net when it cannot.
+- On this PC (2026-11-08): the DMZ works (portchecker.io's SYNs seen arriving from 68.183.43.132, the router looping
+  a connection to the public address back), and the traffic stops at this computer, which answers nothing on a port
+  nothing listens on.
+
 ## 0.2.1 (2026-11-08)
 
 The user, on the platform's page: "disk io is redundant as 'DISKS' below Ports, also there needs to be a refresh button

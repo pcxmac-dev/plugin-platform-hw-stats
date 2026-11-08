@@ -133,3 +133,35 @@ def test_check_host_is_asked_in_json_and_its_faults_said(monkeypatch):
     monkeypatch.setattr(network.urllib.request, "urlopen", offline)
     with pytest.raises(CheckError, match="no network"):
         network.get_json("https://check-host.net/x")
+
+
+def test_portchecker_checks_this_networks_own_address_and_the_next_service_is_asked_when_one_fails():
+    asked = []
+
+    def get(url, *a, **k):
+        asked.append(url)
+        if url.endswith("/api/me"):
+            return HOME + "\n"
+        return {"/api/me/443": "True", "/api/me/25": "False"}.get(url[len(network.PORTCHECKER):], "maybe")
+    pc = network.PortChecker(get=get, wall=lambda: 5.0)
+    found = pc.check(HOME, [443, 25, 9])
+    assert found[443] == Outcome("open", "open: portchecker.io connected", 5.0)
+    assert found[25].state == "blocked" and found[9].said == "failed: portchecker.io answered 'maybe'"
+    assert asked[:2] == ["https://portchecker.io/api/me", "https://portchecker.io/api/me/9"]  # "me": its checks not logged
+    assert pc.check("198.51.100.9", [443])[443].said == f"failed: portchecker.io sees this network as {HOME}, not 198.51.100.9"
+
+    def down(url, *a, **k):
+        raise CheckError("HTTP 503 Service Unavailable")
+    assert network.PortChecker(get=down).check(HOME, [443])[443].said == "failed: portchecker.io could not be asked (HTTP 503 Service Unavailable)"
+
+    class Limited:
+        name = "check-host.net"
+
+        def check(self, address, ports):
+            return {ports[0]: Outcome("failed", "failed: check-host.net's limit was reached (limit_exceeded): try again later")}
+    o, name = network.probe(HOME, 443, (network.PortChecker(get=down), Limited()))
+    assert o.state == "failed" and name == "" and o.said == (
+        "failed: no service could check it from the internet: portchecker.io could not be asked (HTTP 503 Service "
+        "Unavailable); check-host.net's limit was reached (limit_exceeded): try again later")
+    o, name = network.probe(HOME, 443, (network.PortChecker(get=down), network.PortChecker(get=get)))
+    assert o.state == "open" and name == "portchecker.io"  # the next service, once the first failed

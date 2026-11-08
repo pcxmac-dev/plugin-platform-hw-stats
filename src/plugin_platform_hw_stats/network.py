@@ -1,19 +1,24 @@
 """The services the hw-stats plugin asks about this network (every outside host is its plugin's to name, never the
 library's): the name servers answering with the asker's own address (this network's public address: the user,
 2026-11-08, "make sure platform hw stats is able to get the current public IP"), the port tester answering on every
-TCP port (a port checked out from this machine) and check-host.net, whose servers connect to this network's public
-address on the ports asked (a port checked from the internet: "verify that 'selected' ports are available or
-blocked"). The address and the ports go to check-host.net only when the user asks for a check from the internet."""
+TCP port (a port checked out from this machine), portchecker.io (first: it checks the asker's own address, not
+logged) and check-host.net (when portchecker.io cannot), whose servers connect to this network's public address on
+the ports asked (a port checked from the internet: "verify that 'selected' ports are available or blocked"), only when
+the user asks; the router's own WAN address over UPnP (on this network only); and `Net`, what the path check asks of
+this machine and its network (the library's route, ping, hops, capture and listener, these services)."""
 from __future__ import annotations
 
 import ipaddress
 import json
+import re
+import socket
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from liminal_libs.ports import Outcome, parse_ports
+from liminal_libs import capture, netpath
+from liminal_libs.ports import Listener, Outcome, parse_ports
 
 # asked directly (no resolver between) for the asker's own address: (the name, its type, the server, whose); an IPv6
 # address is asked of a server's IPv6 address, so it comes over IPv6 or not at all
@@ -24,6 +29,8 @@ PUBLIC_SERVERS = {
         ("o-o.myaddr.l.google.com", "txt", "2001:4860:4802:32::a", "Google")),
 }
 OUT_HOST = "portquiz.net"  # an outgoing port tester: it answers on every TCP port
+TRACE_TO = "1.1.1.1"  # Cloudflare's resolver: the first routers on the way to it are this network's way out
+PORTCHECKER = "https://portchecker.io"  # its API: /api/me/PORT checks the asker's own address ("True"/"False"), not logged
 CHECK_HOST = "https://check-host.net"  # its API: /check-tcp?host=ADDRESS:PORT&max_nodes=N, then /check-result/ID
 NODES = 3  # its servers asked for each port (in different countries)
 GAP_S = 0.25  # between two ports asked of it
@@ -39,20 +46,177 @@ class CheckError(Exception):
     """check-host.net could not be asked, or answered with something that is not its answer."""
 
 
-def get_json(url: str, timeout: float = 15.0):
-    """A GET answered in JSON (check-host.net answers so when asked with Accept: application/json)."""
-    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": USER_AGENT})
+def get_text(url: str, timeout: float = 15.0, accept: str = "text/plain") -> str:
+    """A GET's answer as text (the services' https addresses only)."""
+    request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": USER_AGENT})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as r:  # noqa: S310 - CHECK_HOST's https address only
-            body = r.read(1 << 20)
+        with urllib.request.urlopen(request, timeout=timeout) as r:  # noqa: S310 - PORTCHECKER's and CHECK_HOST's https addresses only
+            return r.read(1 << 20).decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         raise CheckError(f"HTTP {e.code} {e.reason}") from None
     except (urllib.error.URLError, OSError) as e:
         raise CheckError(str(getattr(e, "reason", e))) from None
+
+
+def get_json(url: str, timeout: float = 15.0):
+    """A GET answered in JSON (check-host.net answers so when asked with Accept: application/json)."""
+    body = get_text(url, timeout, accept="application/json")
     try:
-        return json.loads(body.decode("utf-8", "replace"))
+        return json.loads(body)
     except ValueError:
         raise CheckError("an answer that is not JSON") from None
+
+
+class PortChecker:
+    """portchecker.io: whether this network's public address answers on a port, asked as "me" (it checks the asker's
+    own address, and its code says those checks are not logged); one connection of a second from its server. It
+    cannot say a refusal from no answer: a port not open reads "blocked" until the capture says more."""
+
+    name = "portchecker.io"
+
+    def __init__(self, get=get_text, wall=time.time):
+        self.get, self.wall = get, wall
+
+    def seen_as(self) -> str:
+        """The address portchecker.io sees this network as (the one its checks connect to)."""
+        return self.get(f"{PORTCHECKER}/api/me").strip().strip('"')
+
+    def check(self, address: str, ports) -> dict[int, Outcome]:
+        out: dict[int, Outcome] = {}
+        try:
+            seen = self.seen_as()
+        except CheckError as e:
+            return {int(p): Outcome("failed", f"failed: portchecker.io could not be asked ({e})", self.wall()) for p in ports}
+        if seen != str(address):
+            return {int(p): Outcome("failed", f"failed: portchecker.io sees this network as {seen}, not {address}", self.wall()) for p in ports}
+        for p in parse_ports(ports):
+            try:
+                said = self.get(f"{PORTCHECKER}/api/me/{p}").strip().strip('"').lower()
+            except CheckError as e:
+                out[p] = Outcome("failed", f"failed: portchecker.io could not be asked ({e})", self.wall())
+                continue
+            if said == "true":
+                out[p] = Outcome("open", "open: portchecker.io connected", self.wall())
+            elif said == "false":
+                out[p] = Outcome("blocked", "blocked: portchecker.io could not connect within a second (refused, or no answer)", self.wall())
+            else:
+                out[p] = Outcome("failed", f"failed: portchecker.io answered {said[:60]!r}", self.wall())
+        return out
+
+
+def probe(address: str, port: int, probers) -> tuple[Outcome, str]:
+    """A port at this network's public address checked from the internet: by the first service able to tell (open
+    or not), the next asked when one fails (its limit reached, unreachable). (the outcome, the service's name)."""
+    tried = []
+    for prober in probers:
+        name = getattr(prober, "name", type(prober).__name__)
+        try:
+            o = prober.check(address, [port])[int(port)]
+        except (CheckError, ValueError, KeyError) as e:
+            o = Outcome("failed", f"failed: {name}: {e}", time.time())
+        if o.state != "failed":
+            return o, name
+        tried.append(o.why or name)
+    return Outcome("failed", "failed: no service could check it from the internet: " + "; ".join(tried), time.time()), ""
+
+
+# -- the router's own answer (UPnP) ----------------------------------------------------------------------------
+
+SSDP = ("239.255.255.250", 1900)
+IGD = "urn:schemas-upnp-org:device:InternetGatewayDevice:1"
+SOAP = "http://schemas.xmlsoap.org/soap/envelope/"  # the envelope's namespace (a name, never fetched)
+SOAP_ENCODING = "http://schemas.xmlsoap.org/soap/encoding/"
+
+
+def router_wan(local: str | None, wait: float = 2.5, timeout: float = 4.0) -> str | None:
+    """The router's own WAN address, when it answers UPnP (an Internet Gateway Device's GetExternalIPAddress): asked on
+    this machine's network only; None when UPnP is off or nothing answered."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    except OSError:
+        return None
+    locations: set[str] = set()
+    try:
+        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+        if local:
+            s.bind((local, 0))
+        s.settimeout(0.3)
+        s.sendto(f"M-SEARCH * HTTP/1.1\r\nHOST: {SSDP[0]}:{SSDP[1]}\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: {IGD}\r\n\r\n".encode(), SSDP)
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            try:
+                data, _ = s.recvfrom(4096)
+            except (socket.timeout, TimeoutError):
+                continue
+            m = re.search(rb"(?im)^location:\s*(\S+)", data)
+            if m:
+                locations.add(m.group(1).decode(errors="replace"))
+    except OSError:
+        return None
+    finally:
+        s.close()
+    for location in sorted(locations):
+        parts = urllib.parse.urlparse(location)
+        if parts.scheme != "http" or netpath.kind(parts.hostname) not in ("private", "shared", "link-local"):
+            continue  # the router on this network, nothing else
+        try:
+            with urllib.request.urlopen(location, timeout=timeout) as r:  # noqa: S310 - the router's own description
+                xml = r.read(1 << 20).decode("utf-8", "replace")
+        except (OSError, ValueError):
+            continue
+        for service in re.findall(r"<service>(.*?)</service>", xml, flags=re.S):
+            st, cu = re.search(r"<serviceType>([^<]*)<", service), re.search(r"<controlURL>([^<]*)<", service)
+            if not st or not cu or not re.search(r"WAN(IP|PPP)Connection", st.group(1)):
+                continue
+            body = (f'<?xml version="1.0"?><s:Envelope xmlns:s="{SOAP}" s:encodingStyle="{SOAP_ENCODING}"><s:Body>'
+                    f'<u:GetExternalIPAddress xmlns:u="{st.group(1)}"/></s:Body></s:Envelope>').encode()
+            request = urllib.request.Request(urllib.parse.urljoin(location, cu.group(1)), data=body, headers={
+                "Content-Type": 'text/xml; charset="utf-8"', "SOAPAction": f'"{st.group(1)}#GetExternalIPAddress"'})
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as r:  # noqa: S310
+                    answer = r.read(1 << 16).decode("utf-8", "replace")
+            except (OSError, ValueError):
+                continue
+            m = re.search(r"<NewExternalIPAddress>\s*([^<\s]+)\s*<", answer)
+            if m and netpath.kind(m.group(1)) != "unknown":
+                return m.group(1)
+    return None
+
+
+class Net:
+    """What the path check asks of this machine and its network (a test hands the plugin a stand-in): its route, a
+    ping, the first hops, the router's WAN address, a capture of a port's packets, a listener on a port, the check
+    from the internet."""
+
+    def route(self) -> netpath.Route:
+        return netpath.local_route()
+
+    def ping(self, host: str) -> float | None:
+        return netpath.ping(host)
+
+    def hops(self) -> list[str | None] | None:
+        return netpath.hops(TRACE_TO, 3)
+
+    def wan(self, local: str | None) -> str | None:
+        return router_wan(local)
+
+    def capture(self, address: str, ports):
+        """A started capture (capture.CaptureError when packets cannot be watched here)."""
+        ok, why = capture.available()
+        if not ok:
+            raise capture.CaptureError(why)
+        c = capture.Capture(address, ports)
+        c.start()
+        return c
+
+    def listener(self, port: int) -> Listener:
+        """A started listener on every address (OSError when the port is taken)."""
+        lis = Listener(port)
+        lis.start()
+        return lis
+
+    def probe(self, address: str, port: int) -> tuple[Outcome, str]:
+        return probe(address, port, (PortChecker(), CheckHost()))
 
 
 def place(info) -> str:
