@@ -28,7 +28,7 @@ a day at one every 30 s). Detached, the sampling ends and the samples go.
 
 The platform's page draws its status: the facts on the right, and in the middle the charts (the processor,
 the memory, the network and each program's processor over the last ten minutes or the last day) and the
-tables (the programs, the disks, the data folders).
+tables (the programs, the ports, the disks with their space and their reads and writes, the data folders).
 
 ## This network: its public address and its ports
 
@@ -39,10 +39,13 @@ The user (2026-11-08): "lets make sure platform hw stats is able to get the curr
   address), else of Google's name server (`o-o.myaddr.l.google.com`), each asked directly; a public address only, so a
   machine without an IPv6 route says it has none. Read when the plugin is attached to the platform and every 15
   minutes while it is, and when asked (Read the public address again). Shown among the facts with whose answer it was.
-- **The ports**: `HW_STATS_PORTS` (`25, 80, 443, 8765-8768`, at most 12), read through the platform's login (today
-  the platform's EnvironmentLogin, so the variable; the user's own setting once the login app holds the plugins'
-  settings); unset, Liminal's own pages' ports (8765, 8775, 8785, 8795, 8796). The Ports table says what listens on each
-  here (the program, on every address or this machine only) and each one's last check.
+- **The ports**: chosen above the Ports table: Liminal's own pages' ports (8765, 8775, 8785, 8795, 8796), Web (80,
+  443), Mail (25, 465, 587, 993), Remote access (22, 3389), `HW_STATS_PORTS` when it is set, or ports typed under
+  **Other ports** (at most 12). A choice on the page is kept until the platform restarts (the login keeps no setting
+  yet); otherwise `HW_STATS_PORTS` (`25, 80, 443, 8765-8768`), read through the platform's login (today the platform's
+  EnvironmentLogin, so the variable; the user's own setting once the login app holds the plugins' settings), else
+  Liminal's own. The table says what listens on each here (the program, on every address or this machine only) and
+  each one's last check; **Refresh** reads what listens again now (nothing is sent anywhere).
 - **Check ports** (a button under the table, a form on the platform's page): the ports to check and where from:
   - *From the internet*: check-host.net's servers (three, in different countries) try to connect to this network's
     public address on each port. That address and the ports go to check-host.net, only when you press Check. The
@@ -62,7 +65,8 @@ names none.
 `present` (always), `status` (the summary, the facts, `tables`, `charts`, `forms`, `actions`), `view(span)` (the
 monitor's answer, the shape the charts app's `/api/resources` gives), `charts(span)` (the charts alone; `span`:
 `recent` or `day`), `public_address()` (read now), `check_ports(ports, where, address)` (`where`: `internet`, `out`
-or `both`; `address`, when given, must still be this network's).
+or `both`; `address`, when given, must still be this network's), `choose_ports(ports)` (`liminal`, `web`, `mail`,
+`remote`, `setting`, `chosen` or ports as typed), `refresh_ports()` (what listens, read now).
 
 ## Its setting
 

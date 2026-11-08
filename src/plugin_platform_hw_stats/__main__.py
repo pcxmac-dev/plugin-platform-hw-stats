@@ -58,7 +58,7 @@ def _ports(rest: list[str]) -> int:
             return _usage()
         where, rest = rest[i + 1], rest[:i] + rest[i + 2:]
     try:
-        chosen = parse_ports(" ".join(rest)) if rest else MACHINE.selected()[0]
+        chosen = parse_ports(" ".join(rest)) if rest else MACHINE.selected().ports
     except ValueError as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2

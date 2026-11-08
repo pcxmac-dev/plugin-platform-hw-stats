@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1 (2026-11-08)
+
+The user, on the platform's page: "disk io is redundant as 'DISKS' below Ports, also there needs to be a refresh button
+and port selector for PORTS".
+
+- One Disks table: each disk's space and its reads and writes a second (the bytes since start beneath), in one row when
+  they are the same disk (a drive's letter on Windows; the device holding the mount on Linux, from /sys/dev/block); the
+  Disk I/O table is gone (the chart and the fact stay).
+- The Ports table chooses what it lists (liminal-platform 0.7.0: a table's own choices and buttons): Liminal's own,
+  Web (80, 443), Mail (25, 465, 587, 993), Remote access (22, 3389), HW_STATS_PORTS when set, or ports typed under Other
+  ports (`choose_ports`); kept until the platform restarts, since the login keeps no setting yet. Refresh
+  (`refresh_ports`) reads what listens on each port now; nothing is sent anywhere.
+
 ## 0.2.0 (2026-11-08)
 
 This network's public address and its ports (the user: "lets make sure platform hw stats is able to get the current

@@ -115,16 +115,19 @@ def test_the_status_says_the_machine_every_liminal_program_the_disks_and_the_dat
     assert s["publicAddress"] == "not read yet (it is read while the plugin is attached to the platform)"
     assert s["ports"] == ("8765 (Liminal's charts), 8775 (Liminal's platform), 8785 (Liminal's integrator), 8795 (Liminal's login), "
                           "8796 (the integrator's login) (Liminal's own: HW_STATS_PORTS is not set)") and "problem" not in s
-    programs, ports, disks, io, folders = s["tables"]
+    programs, ports, disks, folders = s["tables"]  # the disks' space and I/O in one table (the user: "disk io is redundant")
     assert ports["title"] == "Ports" and [c["title"] for c in ports["columns"]] == ["Port", "Here", "From the internet", "Out from this machine"]
     assert ports["rows"][0] == [{"text": "8765", "sub": "Liminal's charts"},
                                 {"text": "listening", "sub": "Chart app · port 8765 (pid 4242), this machine only"},
                                 {"text": "–", "sub": "not checked"}, {"text": "–", "sub": "not checked"}]
     assert ports["rows"][1][1] == {"text": "free", "sub": "nothing listens on it here"} and len(ports["rows"]) == 5
     assert ports["rows"][4][0] == {"text": "8796", "sub": "the integrator's login"}
-    assert ports["actions"] == [{"form": "ports", "title": "Check ports…", "values": {"ports": "8765 8775 8785 8795 8796"}}]
-    [form] = s["forms"]
+    assert ports["actions"] == [{"hook": "refresh_ports", "args": [], "title": "Refresh", "note": "reads what listens on each port now; nothing is sent anywhere"},
+                                {"form": "choose", "title": "Other ports…", "values": {"ports": "8765 8775 8785 8795 8796"}},
+                                {"form": "ports", "title": "Check ports…", "values": {"ports": "8765 8775 8785 8795 8796"}}]
+    form, choose = s["forms"]
     assert form["id"] == "ports" and form["hook"] == "check_ports" and form["fields"][0]["value"] == "8765 8775 8785 8795 8796"
+    assert choose["id"] == "choose" and choose["hook"] == "choose_ports" and choose["confirm"] is False
     assert s["actions"] == [{"hook": "public_address", "args": [], "title": "Read the public address again",
                              "note": "asks OpenDNS (else Google's name server) for this network's address now"}]
     assert programs["title"] == "Liminal's programs" and [c["title"] for c in programs["columns"]][:3] == ["Program", "Processes", "CPU"]
@@ -132,8 +135,12 @@ def test_the_status_says_the_machine_every_liminal_program_the_disks_and_the_dat
     assert set(rows) == {"Chart app · port 8765", "Integrator (daemon)", "Platform (this one)"}
     assert rows["Chart app · port 8765"][2] == "25%" and rows["Integrator (daemon)"][2] == "10%"
     assert rows["Chart app · port 8765"][3] == {"text": "500 MB", "sub": "400 MB private"} and rows["Chart app · port 8765"][5] == {"text": "1", "sub": "1 listening"}
-    assert disks["title"] == "Disks" and disks["rows"] and folders["title"] == "Data folders"
-    assert io["title"] == "Disk I/O" and io["rows"] == [["C:", "2.0 MB/s", "1.0 MB/s", "10.0 GB", "2.0 GB"]]
+    assert disks["title"] == "Disks" and folders["title"] == "Data folders"
+    assert [c["title"] for c in disks["columns"]] == ["Disk", "Holds", "Used", "Free", "Total", "Read", "Written"]
+    [c_drive] = [r for r in disks["rows"] if r[5] != "–"]  # C:'s reads and writes, beside its space on Windows
+    assert c_drive[5:] == [{"text": "2.0 MB/s", "sub": "10.0 GB since start"}, {"text": "1.0 MB/s", "sub": "2.0 GB since start"}]
+    if sys.platform == "win32":
+        assert c_drive[0] == "C:\\" and "data" in c_drive[1] and len(disks["rows"]) == 1
     assert [r[0] for r in folders["rows"]] == ["charts/", "login/"] and folders["rows"][0][4] == {"text": "charts/liminal.db", "sub": "3.0 KB"}
     c = s["charts"]
     assert c["span"] == "recent" and len(c["t"]) == 2 and [x["key"] for x in c["charts"]] == ["cpu", "memory", "network", "disk", "programs"]
@@ -212,20 +219,22 @@ def test_the_ports_chosen_are_read_through_the_login(tmp_path):
     p, _ = stand_in(tmp_path)
     assert [k.name for k in p.keys] == ["HW_STATS_PORTS"] and p.keys[0].pair == "hw-stats-ports" and not p.keys[0].secret
     p.login = EnvironmentLogin(env={"HW_STATS_PORTS": "443, 25 8765"})  # the platform's login (the login app's database later)
-    assert p.selected() == ((25, 443, 8765), True, None)
+    assert p.selected() == hw.Chosen((25, 443, 8765), "setting", None)
     s = p.status()
     assert s["ports"] == "25, 443, 8765 (Liminal's charts) (HW_STATS_PORTS)"
     assert [r[0] if isinstance(r[0], str) else r[0]["text"] for r in s["tables"][1]["rows"]] == ["25", "443", "8765"]
+    group = s["tables"][1]["options"][0]
+    assert group["value"] == "setting" and group["choices"][-1] == {"value": "setting", "title": "HW_STATS_PORTS", "note": "25 443 8765"}
     p.login = EnvironmentLogin(env={"HW_STATS_PORTS": "25, mail"})
-    assert p.selected() == ((8765, 8775, 8785, 8795, 8796), False,
-                            "HW_STATS_PORTS: not a port: 'mail' (a number, or a range as 8765-8768); Liminal's own ports are listed instead")
+    assert p.selected() == hw.Chosen((8765, 8775, 8785, 8795, 8796), "liminal",
+                                     "HW_STATS_PORTS: not a port: 'mail' (a number, or a range as 8765-8768); Liminal's own ports are listed instead")
     assert p.status()["problem"].startswith("HW_STATS_PORTS: not a port")
 
     class Unanswering(EnvironmentLogin):
         def variables(self, wanted):
             raise ConnectionError("the login app is not answering")
     p.login = Unanswering()
-    assert p.selected()[2] == "HW_STATS_PORTS could not be read from the login (ConnectionError): Liminal's own ports are listed"
+    assert p.selected().problem == "HW_STATS_PORTS could not be read from the login (ConnectionError); Liminal's own ports are listed instead"
 
 
 def test_the_public_address_is_read_while_attached_and_when_asked(tmp_path):
@@ -291,7 +300,7 @@ def test_a_check_refused_or_failed_says_why_and_asks_nothing(tmp_path):
 
     checker = Checker({})
     p, _ = stand_in(tmp_path, checker=checker)
-    [form] = p.status()["forms"]
+    [form] = [f for f in p.status()["forms"] if f["id"] == "ports"]
     assert [f["name"] for f in form["fields"]] == list(inspect.signature(p.check_ports).parameters) == ["ports", "where", "address"]
     assert [c["value"] for c in form["fields"][1]["choices"]] == ["internet", "out", "both"] and form["fields"][1]["value"] == "internet"
     assert form["fields"][2]["type"] == "fixed" and form["fields"][2]["when"] == {"where": ["internet", "both"]}
@@ -327,6 +336,56 @@ def test_the_command_line_reads_the_address_and_the_ports(tmp_path, monkeypatch,
     assert cli.main(["ports", "--where", "sideways"]) == 2 and cli.main(["ports", "mail"]) == 2 and cli.main(["ip", "now"]) == 2
     err = capsys.readouterr().err
     assert "refused: not a port: 'mail'" in err and err.count("python -m plugin_platform_hw_stats status | view") == 2
+
+
+def test_one_disks_table_holds_each_disks_space_and_its_reads_and_writes():
+    space = [{"path": "C:\\", "holds": ["data", "app", "system"], "used": 2048, "free": 8192, "total": 10240},
+             {"path": "/srv", "holds": ["data"], "used": 1, "free": 1, "total": 2}]
+    io = [{"name": "nvme0n1", "read": 2048.0, "write": 1024.0, "readTotal": 8192, "writtenTotal": 4096},
+          {"name": "c:", "read": 1024.0, "write": None, "readTotal": 4096, "writtenTotal": 0},
+          {"name": "D:", "read": 0.0, "write": 0.0, "readTotal": 1, "writtenTotal": 2}]
+    t = hw.disks_table(space, io, devices=lambda path: {"nvme0n1p2", "nvme0n1"} if path == "/srv" else set())  # Linux: the mount's device
+    rows = {r[0]: r for r in t["rows"]}
+    assert list(rows) == ["C:\\", "/srv", "D:"]  # a disk with only its reads and writes in a row of its own
+    assert rows["C:\\"][2:] == [{"text": "2.0 KB", "sub": "20%"}, "8.0 KB", "10.0 KB", {"text": "1.0 KB/s", "sub": "4.0 KB since start"},
+                                {"text": "–", "sub": "0 B since start"}]
+    assert rows["/srv"][5] == {"text": "2.0 KB/s", "sub": "8.0 KB since start"} and rows["D:"][1:5] == ["–", "–", "–", "–"]
+    assert hw.disks_table(space[:1], [])["rows"][0][5:] == ["–", "–"] and hw.disks_table([], []) is None
+    assert hw.drive("c:\\") == "C:" and hw.drive("sda") == "sda"
+    if sys.platform.startswith("linux"):  # the root's partition and its disk, as /sys/dev/block names them (CI's Ubuntu)
+        assert isinstance(hw.devices_of("/"), set) and hw.devices_of("/no/such/path") == set()
+    else:
+        assert hw.devices_of("C:\\") == set()  # a drive's letter matches on Windows
+
+
+def test_the_ports_listed_are_chosen_on_the_page_and_read_again_on_refresh(tmp_path):
+    p, _ = stand_in(tmp_path)
+    ports = p.status()["tables"][1]
+    [group] = ports["options"]
+    assert group["title"] == "Ports listed" and group["hook"] == "choose_ports" and group["value"] == "liminal"
+    assert [c["value"] for c in group["choices"]] == ["liminal", "web", "mail", "remote"]  # no setting, nothing typed yet
+    assert group["choices"][2] == {"value": "mail", "title": "Mail", "note": "25 465 587 993"}
+    a = p.ask("choose_ports", "web")
+    assert a["said"] == "listing 80, 443" and a["lines"][-1] == f"kept {hw.KEPT}" and p.selected() == hw.Chosen((80, 443), "web")
+    s = p.status()
+    assert [r[0] if isinstance(r[0], str) else r[0]["text"] for r in s["tables"][1]["rows"]] == ["80", "443"]
+    assert s["ports"] == f"80, 443 (Web: chosen on the page, {hw.KEPT})" and s["tables"][1]["options"][0]["value"] == "web"
+    assert s["forms"][1]["fields"][0]["value"] == "80 443" and s["tables"][1]["actions"][2]["values"] == {"ports": "80 443"}
+    assert p.ask("choose_ports", "25, 8765")["said"] == "listing 25, 8765 (Liminal's charts)"
+    assert p.selected() == hw.Chosen((25, 8765), "chosen")
+    assert p.status()["tables"][1]["options"][0]["choices"][-1] == {"value": "chosen", "title": "Typed", "note": "25 8765"}
+    p.ask("choose_ports", "liminal")
+    assert p.ask("choose_ports", "chosen")["said"] == "listing 25, 8765 (Liminal's charts)"  # the ports typed, chosen again
+    with pytest.raises(ValueError, match="not a port"):
+        p.ask("choose_ports", "smtp")
+    with pytest.raises(ValueError, match="HW_STATS_PORTS is not set to ports"):
+        p.ask("choose_ports", "setting")
+    r = p.ask("refresh_ports")
+    assert r["said"] == "read what listens on 2 ports now: 1 listening, 1 free" and r["lines"][1].startswith("8765: listening: Chart app")
+    p.login = EnvironmentLogin(env={"HW_STATS_PORTS": "443"})
+    assert p.selected().ports == (25, 8765)  # the page's choice stands over the setting while the platform runs
+    p.ask("choose_ports", "setting")
+    assert p.selected() == hw.Chosen((443,), "setting") and p.status()["ports"] == f"443 (HW_STATS_PORTS: chosen on the page, {hw.KEPT})"
 
 
 def test_this_machines_own_figures(tmp_path):

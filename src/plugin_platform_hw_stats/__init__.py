@@ -19,12 +19,15 @@ to it) or out from this machine (to portquiz.net). The services are named in `ne
 """
 from __future__ import annotations
 
+import os
+import re
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from liminal_libs import dns
 from liminal_libs.apps import EnvironmentLogin
@@ -37,7 +40,7 @@ from liminal_libs.sources.keys import KeyVar
 
 from .network import OUT_HOST, PUBLIC_SERVERS, CheckHost
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}
@@ -48,6 +51,21 @@ KEYS = (KeyVar(PORTS_VAR, label="Ports to check", secret=False,
 PUBLIC_S = 900.0  # this network's public address read again every 15 minutes while attached
 HERE_S = 10.0  # what listens on the ports read again at most this often
 WHERE = {"internet": "from the internet", "out": "out from this machine", "both": "from the internet and out from this machine"}
+PRESETS = {  # the ports the Ports table may list, chosen on the page beside Liminal's own and HW_STATS_PORTS
+    "web": ("Web", (80, 443)),
+    "mail": ("Mail", (25, 465, 587, 993)),
+    "remote": ("Remote access", (22, 3389)),
+}
+KEPT = "until the platform restarts (the login will keep it once it holds the plugins' settings)"
+
+
+class Chosen(NamedTuple):
+    """The ports the Ports table lists and where they come from: liminal (Liminal's own pages'), setting
+    (HW_STATS_PORTS), web, mail or remote (a set chosen on the page), chosen (ports typed on the page); and what is
+    wrong with the setting, if anything."""
+    ports: tuple[int, ...]
+    source: str
+    problem: str | None = None
 
 
 # -- the figures in words, as the charts app's Resources view gave them ------------------------------------
@@ -159,6 +177,51 @@ def cell(text, sub: str | None = None):
     return {"text": text, "sub": sub} if sub else text
 
 
+def drive(text: str) -> str:
+    """A Windows drive by its letter, "C:" ("C:\\" and "c:" alike); anything else as it is."""
+    m = re.match(r"^([A-Za-z]):", str(text))
+    return f"{m.group(1).upper()}:" if m else str(text)
+
+
+def devices_of(path: str) -> set[str]:
+    """The block devices holding `path` on Linux: its partition and the disk it is on (where /sys/dev/block/MAJOR:MINOR
+    leads among the devices), so a disk's space and its reads and writes meet in one row; none elsewhere."""
+    if not sys.platform.startswith("linux"):
+        return set()
+    try:
+        st = os.stat(path)
+        parts = Path(os.path.realpath(f"/sys/dev/block/{os.major(st.st_dev)}:{os.minor(st.st_dev)}")).parts
+    except (OSError, ValueError):
+        return set()
+    return set(parts[-2:])
+
+
+def io_cell(d: dict | None, rate_key: str, total_key: str):
+    """A disk's reads (or writes) a second, with the bytes since start beneath; "–" for a disk whose are not read."""
+    return cell(rate(d[rate_key]), f"{size(d[total_key])} since start") if d else "–"
+
+
+def disks_table(space: list[dict], io: list[dict], devices=devices_of) -> dict | None:
+    """The disks in one table (the user, 2026-11-08: "disk io is redundant as 'DISKS'"): each one's space (the disks
+    holding the data, the app and the system) and its reads and writes a second, with the bytes since start, in one
+    row when they are the same disk (a drive's letter on Windows, the device holding the mount on Linux); a disk with
+    only one of them in a row of its own."""
+    if not space and not io:
+        return None
+    left, rows = list(io), []
+    for s in space:
+        keys = {drive(s["path"]), *devices(s["path"])}
+        d = next((x for x in left if drive(x["name"]) in keys), None)
+        if d is not None:
+            left.remove(d)
+        rows.append([s["path"], ", ".join(s["holds"]), cell(size(s["used"]), share(s["used"] / s["total"] if s["total"] else None)),
+                     size(s["free"]), size(s["total"]), io_cell(d, "read", "readTotal"), io_cell(d, "write", "writtenTotal")])
+    rows += [[d["name"], "–", "–", "–", "–", io_cell(d, "read", "readTotal"), io_cell(d, "write", "writtenTotal")] for d in left]
+    return {"title": "Disks", "rows": rows,
+            "columns": [{"title": "Disk"}, {"title": "Holds"}, {"title": "Used", "num": True}, {"title": "Free", "num": True},
+                        {"title": "Total", "num": True}, {"title": "Read", "num": True}, {"title": "Written", "num": True}]}
+
+
 def tables(view: dict) -> list[dict]:
     """Liminal's programs, the disks, the data folders: a title, the columns (num: a figure, right aligned),
     the rows (a cell is its text, or {text, sub} with a second line)."""
@@ -176,18 +239,9 @@ def tables(view: dict) -> list[dict]:
                                f"{g['connections']['listening']} listening" if (g.get("connections") or {}).get("listening") else None),
                           f"{g['threads']:,} · {g['handles']:,}", when(g["started"])] for g in programs]})
     files = view.get("files") or {}
-    disks = files.get("disks") or []
+    disks = disks_table(files.get("disks") or [], (view.get("disk") or {}).get("disks") or [])
     if disks:
-        out.append({"title": "Disks", "columns": [{"title": "Disk"}, {"title": "Holds"}, {"title": "Used", "num": True},
-                                                  {"title": "Free", "num": True}, {"title": "Total", "num": True}],
-                    "rows": [[d["path"], ", ".join(d["holds"]), cell(size(d["used"]), share(d["used"] / d["total"] if d["total"] else None)),
-                              size(d["free"]), size(d["total"])] for d in disks]})
-    io = (view.get("disk") or {}).get("disks") or []
-    if io:
-        out.append({"title": "Disk I/O", "columns": [{"title": "Disk"}, {"title": "Read", "num": True},
-                                                     {"title": "Written", "num": True}, {"title": "Read since start", "num": True},
-                                                     {"title": "Written since start", "num": True}],
-                    "rows": [[d["name"], rate(d["read"]), rate(d["write"]), size(d["readTotal"]), size(d["writtenTotal"])] for d in io]})
+        out.append(disks)
     groups = files.get("groups") or []
     if groups:
         out.append({"title": "Data folders", "note": files.get("root", ""),
@@ -268,6 +322,14 @@ def port_name(port: int, own: dict[int, str]) -> str:
     return f"{port} ({whose(own[port])})" if port in own else str(port)
 
 
+def chosen_words(chosen: Chosen, page: bool) -> str:
+    """Where the ports listed come from, in words."""
+    what = {"liminal": "Liminal's own", "setting": PORTS_VAR, "chosen": "typed"}.get(chosen.source) or PRESETS[chosen.source][0]
+    if page:
+        return f"{what}: chosen on the page, {KEPT}"
+    return what if chosen.source == "setting" or chosen.problem else f"{what}: {PORTS_VAR} is not set"
+
+
 def report(chosen, where: str, public: Address | None, results: dict, here: dict) -> dict:
     """A check's answer in words (the page's dialog says `said` and `lines`; `ok` False when a check failed or one
     of Liminal's own pages answers from the internet) with each port's outcomes."""
@@ -300,6 +362,8 @@ class _Runtime:
         self.public = {4: Address(), 6: Address()}
         self.checked: dict[int, dict[str, Outcome]] = {}  # port -> {"in": ..., "out": ...}
         self.last: tuple[int, ...] = ()  # the ports of the last check (listed beside the ports chosen)
+        self.choice: str | None = None  # the ports listed as chosen on the page (a Chosen source); None: not chosen
+        self.custom: tuple[int, ...] = ()  # the ports typed on the page
         self.here: tuple[float, tuple[int, ...], dict] | None = None  # (when, the ports, what listens on each)
         self.stop: threading.Event | None = None
         self.thread: threading.Thread | None = None
@@ -315,7 +379,7 @@ class HwStatsPlugin(MachinePlugin):
     api = "2.1"
     order = 730
     ICON = "gauge"
-    HOOKS = (*MachinePlugin.HOOKS, "view", "charts", "public_address", "check_ports")
+    HOOKS = (*MachinePlugin.HOOKS, "view", "charts", "public_address", "check_ports", "choose_ports", "refresh_ports")
     keys = KEYS
 
     def __init__(self, probe=None, data: Path | None = None, resolve=None, checker=None, connect=None, **monitor_options):
@@ -428,21 +492,71 @@ class HwStatsPlugin(MachinePlugin):
                 "lines": [ip_line(4, v4), ip_line(6, found[6])], "ok": bool(v4.address), "ipv4": v4.address, "ipv6": found[6].address}
 
     # -- the ports ------------------------------------------------------------------------------------------
-    def selected(self) -> tuple[tuple[int, ...], bool, str | None]:
-        """The ports chosen: HW_STATS_PORTS as the login holds it (the platform's EnvironmentLogin today: the variable;
-        the user's own setting once the login app is bound), else Liminal's own pages' ports. (the ports, whether
-        the setting chose them, what is wrong with the setting)."""
-        own = tuple(sorted(own_ports()))
+    def _setting(self) -> tuple[tuple[int, ...], str | None]:
+        """HW_STATS_PORTS as the login holds it (the platform's EnvironmentLogin today: the variable; the user's own
+        setting once the login app is bound): (its ports, none when unset or wrong; what is wrong with it)."""
         try:
             value = ((self.login or EnvironmentLogin()).variables([PORTS_VAR]) or {}).get(PORTS_VAR, "")
-        except Exception as e:  # noqa: BLE001 - a login that cannot say: Liminal's own ports, and why
-            return own, False, f"{PORTS_VAR} could not be read from the login ({type(e).__name__}): Liminal's own ports are listed"
+        except Exception as e:  # noqa: BLE001 - a login that cannot say: no setting, and why
+            return (), f"{PORTS_VAR} could not be read from the login ({type(e).__name__})"
         if not str(value or "").strip():
-            return own, False, None
+            return (), None
         try:
-            return parse_ports(value), True, None
+            return parse_ports(value), None
         except ValueError as e:
-            return own, False, f"{PORTS_VAR}: {e}; Liminal's own ports are listed instead"
+            return (), f"{PORTS_VAR}: {e}"
+
+    def selected(self) -> Chosen:
+        """The ports the Ports table lists: as chosen on the page (kept until the platform restarts: the login keeps
+        it once it holds the plugins' settings), else HW_STATS_PORTS through the login, else Liminal's own pages'."""
+        setting, problem = self._setting()
+        with self._rt.lock:
+            choice, custom = self._rt.choice, self._rt.custom
+        if choice == "chosen" and custom:
+            return Chosen(custom, "chosen", problem)
+        if choice in PRESETS:
+            return Chosen(PRESETS[choice][1], choice, problem)
+        if setting and choice in (None, "setting"):
+            return Chosen(setting, "setting", problem)
+        if problem and choice is None:
+            problem += "; Liminal's own ports are listed instead"
+        return Chosen(tuple(sorted(own_ports())), "liminal", problem)
+
+    def choose_ports(self, ports) -> dict:
+        """The ports the Ports table lists, chosen on the page: liminal (Liminal's own), web, mail, remote, setting
+        (HW_STATS_PORTS), chosen (the ports typed before) or ports as typed (at most 12). Kept until the platform
+        restarts (the login keeps it once it holds the plugins' settings); what listens on them is read at once."""
+        text = str(ports if ports is not None else "").strip()
+        key = text.lower()
+        with self._rt.lock:
+            typed = self._rt.custom
+        if key in ("liminal", "setting", *PRESETS):
+            if key == "setting" and not self._setting()[0]:
+                raise ValueError(f"{PORTS_VAR} is not set to ports: nothing to list from it")
+            choice, custom = key, typed
+        elif key == "chosen":
+            if not typed:
+                raise ValueError("no ports were typed yet: type them under Other ports")
+            choice, custom = "chosen", typed
+        else:
+            choice, custom = "chosen", parse_ports(text)
+        with self._rt.lock:
+            self._rt.choice, self._rt.custom, self._rt.last = choice, custom, ()
+        chosen = self.selected()
+        found = self.listening(chosen.ports, fresh=True)
+        own = own_ports()
+        return {"said": "listing " + ", ".join(port_name(p, own) for p in chosen.ports),
+                "lines": [*(f"{p}: {o.said}" for p, o in found.items()), f"kept {KEPT}"], "ok": True}
+
+    def refresh_ports(self) -> dict:
+        """What listens on each port listed, read now (the Ports table's Refresh); nothing is sent anywhere (a check
+        from outside runs from Check ports)."""
+        chosen = self.selected().ports
+        with self._rt.lock:
+            last = self._rt.last
+        found = self.listening(tuple(sorted({*chosen, *last})), fresh=True)
+        return {"said": f"read what listens on {plural(len(found), 'port')} now: {tally(found.values())}",
+                "lines": [f"{p}: {o.said}" for p, o in found.items()], "ok": True}
 
     def listening(self, ports, view: dict | None = None, fresh: bool = True) -> dict[int, Outcome]:
         """What listens on each of `ports` here (read again at most every HERE_S unless `fresh`): a Liminal app by
@@ -480,7 +594,7 @@ class HwStatsPlugin(MachinePlugin):
         where = str(where or "internet").strip().lower()
         if where not in WHERE:
             raise ValueError(f"a port is checked from the internet, out or both, not {where!r}")
-        chosen = parse_ports(ports) if ports not in (None, "", (), []) else self.selected()[0]
+        chosen = parse_ports(ports) if ports not in (None, "", (), []) else self.selected().ports
         view = self.view("recent")
         results: dict[int, dict[str, Outcome]] = {p: {} for p in chosen}
         public = None
@@ -509,22 +623,43 @@ class HwStatsPlugin(MachinePlugin):
             hits = sorted(p for p, r in self._rt.checked.items() if p in own and r.get("in") and r["in"].state == "open")
         return [f"{whose(own[p])} page answers from the internet on port {p}: Liminal's pages are for this machine only" for p in hits]
 
-    def _ports_table(self, chosen, here: dict) -> dict:
+    def _ports_table(self, chosen: Chosen, here: dict) -> dict:
+        """The Ports table (liminal-platform 0.7.0: a table's own choices and buttons): the ports listed chosen above
+        its rows (Liminal's own, a set, HW_STATS_PORTS, the ports typed), Refresh, Other ports and Check ports under it."""
         with self._rt.lock:
             checked = {p: dict(r) for p, r in self._rt.checked.items()}
-            v4 = self._rt.public[4].address
+            v4, typed = self._rt.public[4].address, self._rt.custom
         own = own_ports()
         rows = [[cell(str(p), whose(own[p]) if p in own else None), outcome_cell(here.get(p), "not read"),
                  outcome_cell(checked.get(p, {}).get("in")), outcome_cell(checked.get(p, {}).get("out"))] for p in sorted(here)]
+        listed = " ".join(map(str, chosen.ports))
+        setting = self._setting()[0]
+        choices = [{"value": "liminal", "title": "Liminal's own", "note": " ".join(map(str, sorted(own)))},
+                   *({"value": k, "title": title, "note": " ".join(map(str, ports))} for k, (title, ports) in PRESETS.items()),
+                   *([{"value": "setting", "title": PORTS_VAR, "note": " ".join(map(str, setting))}] if setting else []),
+                   *([{"value": "chosen", "title": "Typed", "note": " ".join(map(str, typed))}] if typed else [])]
         target = v4 or "this network's public address"
         return {"title": "Ports",
                 "note": (f"Here: this machine's sockets now. From the internet: check-host.net's servers connecting to {target}. "
                          f"Out: this machine connecting to {OUT_HOST}. Those two only when asked (Check ports)."),
+                "options": [{"title": "Ports listed", "hook": "choose_ports", "value": chosen.source, "choices": choices}],
                 "columns": [{"title": "Port"}, {"title": "Here"}, {"title": "From the internet"}, {"title": "Out from this machine"}],
                 "rows": rows,
-                "actions": [{"form": "ports", "title": "Check ports…", "values": {"ports": " ".join(map(str, chosen))}}]}
+                "actions": [{"hook": "refresh_ports", "args": [], "title": "Refresh",
+                             "note": "reads what listens on each port now; nothing is sent anywhere"},
+                            {"form": "choose", "title": "Other ports…", "values": {"ports": listed}},
+                            {"form": "ports", "title": "Check ports…", "values": {"ports": listed}}]}
 
-    def _ports_form(self, chosen) -> dict:
+    def _choose_form(self, chosen: Chosen) -> dict:
+        """Other ports (liminal-platform 0.7.0: confirm false, since it changes nothing on the machine): the ports the
+        Ports table lists, typed; check_ports' sibling choose_ports asked with them once filled."""
+        return {"id": "choose", "hook": "choose_ports", "title": "Ports listed", "confirm": False,
+                "note": f"At most {MAX_PORTS}. Kept {KEPT}.",
+                "fields": [{"name": "ports", "label": "Ports", "type": "text", "required": True, "value": " ".join(map(str, chosen.ports)),
+                            "placeholder": "25, 80, 443, 8765-8768", "note": "separated by commas or spaces; a range as 8765-8768"}],
+                "submit": "List them"}
+
+    def _ports_form(self, chosen: Chosen) -> dict:
         """The Check ports form (liminal-platform 0.6.0, status.forms): the fields are check_ports' arguments in order."""
         with self._rt.lock:
             v4 = self._rt.public[4].address
@@ -532,7 +667,7 @@ class HwStatsPlugin(MachinePlugin):
             "id": "ports", "hook": "check_ports", "title": "Check ports",
             "note": f"At most {MAX_PORTS} at once. What listens on each here is read too; nothing on this machine is changed.",
             "fields": [
-                {"name": "ports", "label": "Ports", "type": "text", "required": True, "value": " ".join(map(str, chosen)),
+                {"name": "ports", "label": "Ports", "type": "text", "required": True, "value": " ".join(map(str, chosen.ports)),
                  "placeholder": "25, 80, 443, 8765-8768", "note": "separated by commas or spaces; a range as 8765-8768"},
                 {"name": "where", "label": "Checked", "type": "choice", "value": "internet", "choices": [
                     {"value": "internet", "title": "From the internet",
@@ -551,13 +686,13 @@ class HwStatsPlugin(MachinePlugin):
 
     def status(self) -> dict:
         view = self.view("recent")
-        chosen, chose, problem = self.selected()
+        chosen = self.selected()
         with self._rt.lock:
-            v4, v6, last = self._rt.public[4], self._rt.public[6], self._rt.last
+            v4, v6, last, page = self._rt.public[4], self._rt.public[6], self._rt.last, self._rt.choice is not None
         reading = self.watching
         own = own_ports()
         network = {"publicAddress": address_words(v4, reading), "publicIpv6": address_words(v6, reading),
-                   "ports": ", ".join(port_name(p, own) for p in chosen) + (f" ({PORTS_VAR})" if chose else f" (Liminal's own: {PORTS_VAR} is not set)")}
+                   "ports": ", ".join(port_name(p, own) for p in chosen.ports) + f" ({chosen_words(chosen, page)})"}
         base = facts(view)
         after = next((k for k in ("link", "adapters", "network") if k in base), None)  # the last of the network's figures
         out: dict = {"present": True, "summary": summary(view)}
@@ -567,13 +702,14 @@ class HwStatsPlugin(MachinePlugin):
                 out.update(network)
         if after is None:
             out.update(network)
-        here = self.listening(tuple(sorted({*chosen, *last})), view, fresh=False)
+        here = self.listening(tuple(sorted({*chosen.ports, *last})), view, fresh=False)
         tabs = tables(view)
         tabs.insert(1, self._ports_table(chosen, here))
-        out.update({"sampling": self.sampling, "tables": tabs, "charts": charts(view), "forms": [self._ports_form(chosen)],
+        out.update({"sampling": self.sampling, "tables": tabs, "charts": charts(view),
+                    "forms": [self._ports_form(chosen), self._choose_form(chosen)],
                     "actions": [{"hook": "public_address", "args": [], "title": "Read the public address again",
                                  "note": "asks OpenDNS (else Google's name server) for this network's address now"}]})
-        trouble = ([problem] if problem else []) + self._exposed()
+        trouble = ([chosen.problem] if chosen.problem else []) + self._exposed()
         if trouble:
             out["problem"] = "; ".join(trouble)
         return out
