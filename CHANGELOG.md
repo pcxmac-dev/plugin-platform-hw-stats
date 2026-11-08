@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 (2026-11-07)
+
+The disks' I/O, hardware only (the user: "lets get disk io ... in hwstats"; "the platform only cares about hardware";
+the databases' own figures are the integrator's): the bytes read and written a second over every disk, charted with
+the network, and each disk's rates and totals since start in a table (liminal-libs 1.26.0: `disk` in the monitor's view).
+
 ## 0.1.0 (2026-11-07)
 
 The first release: the charts app's Resources monitoring as a platform plugin (the library's

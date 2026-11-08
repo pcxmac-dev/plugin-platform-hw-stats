@@ -1,6 +1,6 @@
 """Hardware stats for Liminal (the user, 2026-11-07: "i need the hardware monitoring that was in charts, it needs
 to be windows and linux agnostic, ie it runs on both, the stats were on the charts app but they need a plugin
-too, hw-stats platform plugin"): this machine's processor, memory, network and disks, the data files, and every
+too, hw-stats platform plugin"): this machine's processor, memory, network, disks and their reads and writes, the data files, and every
 Liminal app's processes (the charts app, the integrator, the login, the platform) with their CPU, memory, reads
 and writes, threads and connections. The library's resources.Monitor samples them (Windows: kernel32, ntdll and
 iphlpapi; Linux: /proc and /sys) every 30 s in the background and every 2 s while the platform's page shows
@@ -19,7 +19,7 @@ from pathlib import Path
 from liminal_libs.machines.plugin import MachinePlugin
 from liminal_libs.resources import Monitor, default_probe, framework_role, is_framework
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}
@@ -97,6 +97,9 @@ def facts(view: dict) -> dict:
         out["adapters"] = ", ".join(net["adapters"]) or "none up"
         if net.get("link"):
             out["link"] = link(net["link"])
+    disk = view.get("disk")
+    if disk:
+        out["diskIo"] = f"{rate(disk['read'])} read, {rate(disk['write'])} written"
     if links:
         out["connections"] = (f"Liminal's {links['app']} · the machine's {links['established']} established, "
                               f"{links['listening']} listening")
@@ -144,6 +147,12 @@ def tables(view: dict) -> list[dict]:
                                                   {"title": "Free", "num": True}, {"title": "Total", "num": True}],
                     "rows": [[d["path"], ", ".join(d["holds"]), cell(size(d["used"]), share(d["used"] / d["total"] if d["total"] else None)),
                               size(d["free"]), size(d["total"])] for d in disks]})
+    io = (view.get("disk") or {}).get("disks") or []
+    if io:
+        out.append({"title": "Disk I/O", "columns": [{"title": "Disk"}, {"title": "Read", "num": True},
+                                                     {"title": "Written", "num": True}, {"title": "Read since start", "num": True},
+                                                     {"title": "Written since start", "num": True}],
+                    "rows": [[d["name"], rate(d["read"]), rate(d["write"]), size(d["readTotal"]), size(d["writtenTotal"])] for d in io]})
     groups = files.get("groups") or []
     if groups:
         out.append({"title": "Data folders", "note": files.get("root", ""),
@@ -156,7 +165,8 @@ def tables(view: dict) -> list[dict]:
 
 def charts(view: dict) -> dict:
     """The line charts the page draws over the same times (t: seconds since 1970): the processor (a share of the
-    machine), the memory in use (of the total), the network (in and out on one axis, in bytes a second) and
+    machine), the memory in use (of the total), the network (in and out on one axis, in bytes a second), the disks'
+    reads and writes (bytes a second, all disks together) and
     each Liminal program's processor (a share of one core). `unit`: share | bytes | bytes/s; `max`: the axis's
     top when the figure has one; `interval`: the seconds until the next sample."""
     s, m = view.get("series") or {}, view.get("machine") or {}
@@ -171,6 +181,10 @@ def charts(view: dict) -> dict:
     if any(v is not None for v in [*(s.get("in") or []), *(s.get("out") or [])]):
         out.append({"key": "network", "title": "Network", "unit": "bytes/s", "max": None,
                     "lines": [{"key": "in", "name": "in", "values": s["in"]}, {"key": "out", "name": "out", "values": s["out"]}]})
+    if any(v is not None for v in [*(s.get("diskRead") or []), *(s.get("diskWrite") or [])]):
+        out.append({"key": "disk", "title": "Disk I/O", "unit": "bytes/s", "max": None,
+                    "lines": [{"key": "read", "name": "read", "values": s["diskRead"]},
+                              {"key": "write", "name": "written", "values": s["diskWrite"]}]})
     per = s.get("processes") or {}
     lines = [{"key": g["role"], "name": g["label"], "values": per[g["key"]]["cpu"]} for g in programs
              if g["key"] in per and any(v is not None for v in per[g["key"]]["cpu"])]

@@ -12,7 +12,7 @@ import pytest
 
 import plugin_platform_hw_stats as hw
 import plugin_platform_hw_stats.__main__ as cli
-from liminal_libs.resources import Conn, Machine, Net, Proc
+from liminal_libs.resources import Conn, Disk, Machine, Net, Proc
 from plugin_platform_hw_stats import HwStatsPlugin
 
 GB = 2**30
@@ -42,6 +42,9 @@ class FakeProbe:
 
     def network(self):
         return Net(received=10_000 + self.n * 4096, sent=5_000 + self.n * 2048, link_bps=1_000_000_000, adapters=("Ethernet",))
+
+    def disks(self):
+        return [Disk("C:", 10 * GB + self.n * 4 * MB, 2 * GB + self.n * 2 * MB)]
 
     def connections(self):
         return [Conn(4242, "listening", "127.0.0.1:8765", ""), Conn(4242, "established", "127.0.0.1:8765", "127.0.0.1:50000"),
@@ -80,20 +83,23 @@ def test_the_status_says_the_machine_every_liminal_program_the_disks_and_the_dat
     assert (s["processor"], s["memory"], s["committed"]) == ("25% of 8 cores", "8.0 GB of 32.0 GB · 25%", "10.0 GB of 40.0 GB")
     assert (s["network"], s["adapters"], s["link"]) == ("2.0 KB/s in, 1.0 KB/s out", "Ethernet", "1.0 Gb/s")
     assert s["connections"] == "Liminal's 1 · the machine's 2 established, 1 listening"
+    assert s["diskIo"] == "2.0 MB/s read, 1.0 MB/s written"  # the disks' I/O, hardware only
     assert s["dataFiles"] == "4.0 KB in 2 files" and s["dataFolder"] == str(tmp_path) and s["dataGrowth"] == "after a minute of samples"
     assert s["system"] in ("Windows", "Linux", sys.platform) and s["sampled"] == "every 2 s while shown, every 30 s otherwise"
     assert s["sampling"] is False  # not attached: nothing samples on its own
-    programs, disks, folders = s["tables"]
+    programs, disks, io, folders = s["tables"]
     assert programs["title"] == "Liminal's programs" and [c["title"] for c in programs["columns"]][:3] == ["Program", "Processes", "CPU"]
     rows = {r[0]["text"] if isinstance(r[0], dict) else r[0]: r for r in programs["rows"]}
     assert set(rows) == {"Chart app · port 8765", "Integrator (daemon)", "Platform (this one)"}
     assert rows["Chart app · port 8765"][2] == "25%" and rows["Integrator (daemon)"][2] == "10%"
     assert rows["Chart app · port 8765"][3] == {"text": "500 MB", "sub": "400 MB private"} and rows["Chart app · port 8765"][5] == {"text": "1", "sub": "1 listening"}
     assert disks["title"] == "Disks" and disks["rows"] and folders["title"] == "Data folders"
+    assert io["title"] == "Disk I/O" and io["rows"] == [["C:", "2.0 MB/s", "1.0 MB/s", "10.0 GB", "2.0 GB"]]
     assert [r[0] for r in folders["rows"]] == ["charts/", "login/"] and folders["rows"][0][4] == {"text": "charts/liminal.db", "sub": "3.0 KB"}
     c = s["charts"]
-    assert c["span"] == "recent" and len(c["t"]) == 2 and [x["key"] for x in c["charts"]] == ["cpu", "memory", "network", "programs"]
-    cpu, memory, network, per = c["charts"]
+    assert c["span"] == "recent" and len(c["t"]) == 2 and [x["key"] for x in c["charts"]] == ["cpu", "memory", "network", "disk", "programs"]
+    cpu, memory, network, disk, per = c["charts"]
+    assert [(ln["name"], ln["values"]) for ln in disk["lines"]] == [("read", [None, 2.0 * MB]), ("written", [None, 1.0 * MB])] and disk["unit"] == "bytes/s"
     assert cpu["unit"] == "share" and cpu["max"] == 1.0 and cpu["lines"][0]["values"] == [None, 0.25]
     assert memory["max"] == 32 * GB and memory["lines"][0]["values"] == [8 * GB, 8 * GB]
     assert [(ln["key"], ln["values"]) for ln in network["lines"]] == [("in", [None, 2048.0]), ("out", [None, 1024.0])]

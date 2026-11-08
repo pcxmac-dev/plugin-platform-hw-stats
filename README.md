@@ -17,7 +17,8 @@ over the library's `resources.Monitor`, the sampler the charts app's Resources v
 - Every Liminal app's processes (the charts app, the integrator, the login, the platform, each with its port
   or `(daemon)`): CPU as a share of one core, memory and private bytes, reads and writes a second, threads,
   handles, connections, when it started.
-- The disks holding the data, the app and the system; the data folder's size, files and growth by folder.
+- The disks holding the data, the app and the system; each disk's reads and writes a second and since start (hardware
+  only: the databases' own figures are the integrator's); the data folder's size, files and growth by folder.
 - Read on Windows through kernel32, ntdll and iphlpapi, on Linux through `/proc` and `/sys`: the same figures
   either way. Elsewhere only this process, the disks and the files.
 
