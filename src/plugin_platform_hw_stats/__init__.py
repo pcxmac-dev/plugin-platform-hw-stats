@@ -74,6 +74,8 @@ def plural(n: int, word: str) -> str:
 # -- what the platform's page shows: the summary, the facts, the tables, the charts --------------------------
 def summary(view: dict) -> str:
     m, programs = view.get("machine"), view.get("processes") or []
+    if not view.get("sampledAt"):  # attached a moment ago: the sampler's first sample is under way
+        return "sampling: the first sample is under way"
     if not m:
         return f"{plural(len(programs), 'Liminal program')}; the machine's figures are not read on {sys.platform}"
     if m.get("cpu") is None:

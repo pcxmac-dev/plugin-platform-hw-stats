@@ -67,6 +67,7 @@ def test_the_figures_in_words_as_the_charts_app_gave_them():
     assert (hw.rate(2048), hw.rate(None), hw.share(0.254), hw.core(0.05), hw.core(0.25)) == ("2.0 KB/s", "–", "25%", "5.0%", "25%")
     assert (hw.link(1e9), hw.link(1e8), hw.link(0), hw.growth(2048), hw.growth(None)) == ("1.0 Gb/s", "100 Mb/s", "", "+2.0 KB/h", "–")
     assert hw.when(None) == "–" and hw.when("not a time") == "not a time" and len(hw.when("2026-11-07T19:03:12+00:00")) == 12
+    assert hw.summary({"processes": [], "machine": None, "sampledAt": None}) == "sampling: the first sample is under way"
 
 
 def test_the_status_says_the_machine_every_liminal_program_the_disks_and_the_data(tmp_path):
