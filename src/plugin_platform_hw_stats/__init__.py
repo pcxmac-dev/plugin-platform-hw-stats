@@ -156,7 +156,7 @@ def charts(view: dict) -> dict:
     """The line charts the page draws over the same times (t: seconds since 1970): the processor (a share of the
     machine), the memory in use (of the total), the network (in and out on one axis, in bytes a second) and
     each Liminal program's processor (a share of one core). `unit`: share | bytes | bytes/s; `max`: the axis's
-    top when the figure has one."""
+    top when the figure has one; `interval`: the seconds until the next sample."""
     s, m = view.get("series") or {}, view.get("machine") or {}
     t = s.get("t") or []
     programs = view.get("processes") or []
@@ -174,7 +174,7 @@ def charts(view: dict) -> dict:
              if g["key"] in per and any(v is not None for v in per[g["key"]]["cpu"])]
     if lines:
         out.append({"key": "programs", "title": "Liminal's programs: processor", "unit": "share", "of": "one core", "max": None, "lines": lines})
-    return {"span": view.get("span", "recent"), "t": t, "charts": out}
+    return {"span": view.get("span", "recent"), "t": t, "interval": view.get("interval"), "charts": out}
 
 
 class HwStatsPlugin(MachinePlugin):
