@@ -9,7 +9,7 @@ platform plugin".
 
 ## What it does
 
-A machine plugin of the platform (`liminal_libs.machines.MachinePlugin`, plugin API 2.1, its icon the gauge)
+A machine plugin of the platform (`liminal_libs.machines.MachinePlugin`, plugin API 2.2, its icon the gauge)
 over the library's `resources.Monitor`, the sampler the charts app's Resources view uses:
 
 - The machine: the processor's load over all its cores, the memory in use and committed, the network's bytes
@@ -73,6 +73,42 @@ The user (2026-11-08): "lets make sure platform hw stats is able to get the curr
 
 Nothing on this machine is changed by a check. The services' hosts are this plugin's (`network.py`): the library
 names none.
+
+## Its API
+
+The user's words (2026-11-11): "each plugin should reflect the the API its attached to, and present links that provide
+documentation, the plugin interface should more or less contain what it already has, BUT, it should also expose more of
+what the API is about". Since 0.4.0 (plugin API 2.2) the plugin declares what it attaches to (`apis.py`), and the
+platform's page draws each card: what the API is, its links, every part of it (those the plugin uses first, the rest
+under "more of the API") and every call it makes, with the API's other notable calls beside them.
+
+- **Windows**: the Win32 functions the library's sampler calls ([GetSystemTimes](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getsystemtimes),
+  [GlobalMemoryStatusEx](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-globalmemorystatusex),
+  [IOCTL_DISK_PERFORMANCE](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-ioctl_disk_performance),
+  [NtQueryInformationProcess](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess),
+  [GetIfTable2](https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-getiftable2),
+  [GetExtendedTcpTable](https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getextendedtcptable) and the rest).
+- **Linux**: [proc(5)](https://man7.org/linux/man-pages/man5/proc.5.html), [sysfs](https://docs.kernel.org/filesystems/sysfs.html),
+  [/proc/diskstats](https://docs.kernel.org/admin-guide/iostats.html), [/proc/net/tcp](https://docs.kernel.org/networking/proc_net_tcp.html).
+- **ping, tracert or traceroute, and nslookup**, the system's own commands: the path check and the public address.
+- **OpenDNS** ([its resolvers](https://www.opendns.com/setupguide/)) and **Google's name servers**
+  ([Google Public DNS](https://developers.google.com/speed/public-dns)): this network's public address, asked of them
+  directly; neither documents the name it answers so (myip.opendns.com, o-o.myaddr.l.google.com).
+- **portchecker.io** ([its API](https://portchecker.io/docs), [its OpenAPI](https://portchecker.io/docs/openapi.json))
+  and **check-host.net** ([its API](https://check-host.net/about/api)): a port checked from the internet.
+- **portquiz.net**: a port checked out from this machine; its page (http://portquiz.net) has no HTTPS address, so its
+  card links this plugin's own pages instead.
+- **UPnP Internet Gateway Device** ([the specifications](https://openconnectivity.org/developer/specifications/upnp-resources/upnp/)):
+  the router's WAN address, on this network only.
+- **Npcap and libpcap** ([Npcap](https://npcap.com/), [pcap(3PCAP)](https://www.tcpdump.org/manpages/pcap.3pcap.html)):
+  the packets of the port checked. Npcap's free license allows five installs; more, or redistributing it, needs a paid
+  [OEM license](https://npcap.com/oem/).
+
+`api_facts()` says what the plugin kept of them while it ran, asking nothing: the sampler's state, this network's
+public address and whose answer it was, the last checks from the internet and out, and the last path check's findings
+(the prober's answer, the router's WAN address, the packets, the gateway and the first hops). Every address on the
+cards was read on 2026-11-11; the test `test_the_cards_pages_answer` asks each of them again when
+`LIMINAL_VENDOR_PAGES=1` is set (it is skipped otherwise).
 
 ## Its hooks
 

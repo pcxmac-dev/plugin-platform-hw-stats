@@ -15,6 +15,13 @@ once the login app holds it; Liminal's own pages' ports unless set), each with w
 user asks (Check ports), whether each answers from the internet at that address (check-host.net's servers connect
 to it) or out from this machine (to portquiz.net). The services are named in `network`.
 
+What it attaches to (0.4.0, plugin API 2.2; the user, 2026-11-11: "each plugin should reflect the the API its attached
+to, and present links that provide documentation"): Windows' kernel32, ntdll and iphlpapi, Linux's /proc and /sys, the
+system's ping, tracert and nslookup, OpenDNS's and Google's name servers, portchecker.io, check-host.net, portquiz.net,
+the router over UPnP and Npcap or libpcap, each with its makers' pages, its parts and its calls (apis.py), drawn on the
+plugin's page; `api_facts` says what the plugin kept of them (the public address and whose answer it was, the last
+checks and the last path check), asking nothing.
+
     python -m plugin_platform_hw_stats status | view [recent|day] | charts [recent|day] | ip | ports [PORTS] [--where W]
 """
 from __future__ import annotations
@@ -38,9 +45,10 @@ from liminal_libs.ports import connect as connect_out
 from liminal_libs.resources import Monitor, default_probe, framework_role, is_framework
 from liminal_libs.sources.keys import KeyVar
 
+from .apis import APIS, CAPTURE, CHECK_HOST, GOOGLE, LINUX, OPENDNS, PORTCHECKER, PORTQUIZ, TOOLS, UPNP_IGD, WINDOWS
 from .network import OUT_HOST, PUBLIC_SERVERS, TRACE_TO, CheckHost, Net
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}
@@ -494,7 +502,8 @@ class HwStatsPlugin(MachinePlugin):
     title = "Hardware stats"
     about = ("This machine's processor, memory, network, disks and data files, and every Liminal app's processes: "
              "on Windows and Linux alike; this network's public address and its ports, checked when asked")
-    api = "2.1"
+    api = "2.2"
+    apis = APIS  # what it attaches to: Win32, /proc and /sys, the system's tools, the outside services (apis.py)
     order = 730
     ICON = "gauge"
     HOOKS = (*MachinePlugin.HOOKS, "view", "charts", "public_address", "check_ports", "choose_ports", "refresh_ports", "check_path")
@@ -561,6 +570,48 @@ class HwStatsPlugin(MachinePlugin):
 
     def present(self) -> bool:
         return True  # the machine is always there; what can be read of it is in the status
+
+    def api_facts(self) -> dict:
+        """What it kept of its APIs while it ran, asking nothing: the sampler's state (which interface it reads), this
+        network's public address and whose answer it was, the last checks from the internet and out, and the last path
+        check's findings (the prober's answer, the router's WAN address, the packets, the gateway and the first hops)."""
+        out: dict[str, dict[str, str]] = {}
+        with self._lock:
+            m = self._monitor
+        if m is not None:
+            card = {"WindowsProbe": WINDOWS.name, "LinuxProbe": LINUX.name}.get(type(m.probe).__name__)
+            if card:
+                out[card] = {"Sampling": "on" if m._thread is not None and not m._stop.is_set() else "off",
+                             "Samples kept": f"{len(m.recent):,}"}
+                if m._error:
+                    out[card]["Last sample failed"] = m._error
+        with self._rt.lock:
+            public, checked, run = dict(self._rt.public), {p: dict(r) for p, r in self._rt.checked.items()}, self._rt.path
+        for version in (4, 6):
+            a = public.get(version)
+            if a is not None and a.at:
+                card = GOOGLE.name if a.said == "Google" else OPENDNS.name  # OpenDNS is asked first; a failure is said there
+                out.setdefault(card, {})[f"IPv{version}"] = (f"{a.address}, {clock(a.at)}" if a.address else
+                                                             f"none ({a.said}), {clock(a.at)}")
+        for key, card, label in (("in", CHECK_HOST.name, "Last check from the internet"), ("out", PORTQUIZ.name, "Last check out")):
+            found = [r[key] for r in checked.values() if key in r]
+            if found:
+                out.setdefault(card, {})[label] = f"{tally(found)}, {clock(max(o.at for o in found))}"
+        if run is not None:
+            if run.probe is not None and run.prober:
+                card = PORTCHECKER.name if run.prober == PORTCHECKER.name else CHECK_HOST.name
+                out.setdefault(card, {})["Last path check"] = f"port {run.port}: {run.probe.state}, {clock(run.started)}"
+            if run.wan:
+                out.setdefault(UPNP_IGD.name, {})["The router's WAN address"] = f"{run.wan}, {clock(run.started)}"
+            if run.capture_why or run.packets:
+                out.setdefault(CAPTURE.name, {})["Last path check"] = (f"not watched: {run.capture_why}" if run.capture_why
+                                                                       else f"{plural(len(run.packets), 'packet')} seen on port {run.port}")
+            if run.gateway:
+                tools = out.setdefault(TOOLS.name, {})
+                tools["Gateway"] = run.gateway + (f", {run.gateway_ms:.0f} ms" if run.gateway_ms is not None else ", no echo")
+                if run.hops is not None:
+                    tools["First hops"] = ", ".join(h or "*" for h in run.hops) or "none answered"
+        return out
 
     def view(self, span: str = "recent") -> dict:
         """The monitor's view (the charts app's Resources answer): `span` recent (ten minutes) or day."""

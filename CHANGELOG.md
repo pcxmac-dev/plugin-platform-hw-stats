@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0 (2026-11-11)
+
+Its API on its page, plugin API 2.2 (the user: "each plugin should reflect the the API its attached to, and present
+links that provide documentation, the plugin interface should more or less contain what it already has, BUT, it should
+also expose more of what the API is about"). Ten cards (`apis.py`), each with the makers' pages, every part of the API
+said covered or not, and every call the plugin makes beside the API's other notable ones: Windows' kernel32, ntdll and
+iphlpapi (every Win32 function the library's sampler calls), Linux's /proc and /sys, the system's ping, tracert or
+traceroute and nslookup, OpenDNS's and Google's name servers, portchecker.io (its OpenAPI), check-host.net,
+portquiz.net (no HTTPS page of its own: the plugin's pages are linked), the router's UPnP Internet Gateway Device, and
+Npcap with libpcap (Npcap's free license allows five installs; its OEM license, paid, more).
+
+`api_facts()` says what the plugin kept while it ran, asking nothing: the sampler's state, the public address and
+whose answer it was, the last checks from the internet and out, the last path check's findings. Tests: the cards name
+every Win32 function, /proc and /sys file and pcap function the library calls for the plugin, the commands it runs, the
+name servers' questions, the services' endpoints and portquiz.net's ports; a link check runs with
+LIMINAL_VENDOR_PAGES=1. Needs liminal-libs>=1.49.0.
+
 ## 0.3.1 (2026-11-08)
 
 A time near 1970 is said in UTC where Windows cannot take it to local time (Python before 3.13: CI's
