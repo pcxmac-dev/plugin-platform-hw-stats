@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 (2026-11-14)
+
+Liminal's own ports are the four apps' alone (liminal-libs 1.52.0; the user, 2026-11-14: "i only want ports for liminal-login ; liminal-platform ; liminal-charts ; liminal-integrator"; "never provide ports for anything else"): the integrator's login at 8796 is gone, a login an app inherits being an object in that app, at its port. The Ports table lists those four when HW_STATS_PORTS is not set.
+
 ## 0.4.0 (2026-11-11)
 
 Its API on its page, plugin API 2.2 (the user: "each plugin should reflect the the API its attached to, and present

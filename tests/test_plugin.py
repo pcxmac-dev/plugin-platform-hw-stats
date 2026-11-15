@@ -113,8 +113,8 @@ def test_the_status_says_the_machine_every_liminal_program_the_disks_and_the_dat
     keys = list(s)
     assert keys[keys.index("network"):keys.index("network") + 6] == ["network", "adapters", "link", "publicAddress", "publicIpv6", "ports"]
     assert s["publicAddress"] == "not read yet (it is read while the plugin is attached to the platform)"
-    assert s["ports"] == ("8765 (Liminal's charts), 8775 (Liminal's platform), 8785 (Liminal's integrator), 8795 (Liminal's login), "
-                          "8796 (the integrator's login) (Liminal's own: HW_STATS_PORTS is not set)") and "problem" not in s
+    assert s["ports"] == ("8765 (Liminal's charts), 8775 (Liminal's platform), 8785 (Liminal's integrator), 8795 (Liminal's login) "
+                          "(Liminal's own: HW_STATS_PORTS is not set)") and "problem" not in s
     programs, ports, disks, folders = s["tables"]  # the disks' space and I/O in one table (the user: "disk io is redundant")
     assert ports["title"] == "Ports" and [c["title"] for c in ports["columns"]] == ["Port", "Here", "From the internet", "Out from this machine",
                                                                                      "Hop by hop"]
@@ -122,14 +122,14 @@ def test_the_status_says_the_machine_every_liminal_program_the_disks_and_the_dat
                                 {"text": "listening", "sub": "Chart app · port 8765 (pid 4242), this machine only"},
                                 {"text": "–", "sub": "not checked"}, {"text": "–", "sub": "not checked"},
                                 {"form": "path", "title": "Way in", "values": {"port": 8765}, "label": "Check the way in to port 8765"}]
-    assert ports["rows"][1][1] == {"text": "free", "sub": "nothing listens on it here"} and len(ports["rows"]) == 5
-    assert ports["rows"][4][0] == {"text": "8796", "sub": "the integrator's login"}
+    assert ports["rows"][1][1] == {"text": "free", "sub": "nothing listens on it here"} and len(ports["rows"]) == 4
+    assert ports["rows"][3][0] == {"text": "8795", "sub": "Liminal's login"}  # the four apps' alone (liminal-libs 1.52.0)
     assert ports["actions"] == [{"hook": "refresh_ports", "args": [], "title": "Refresh", "note": "reads what listens on each port now; nothing is sent anywhere"},
-                                {"form": "choose", "title": "Other ports…", "values": {"ports": "8765 8775 8785 8795 8796"}},
-                                {"form": "ports", "title": "Check ports…", "values": {"ports": "8765 8775 8785 8795 8796"}},
+                                {"form": "choose", "title": "Other ports…", "values": {"ports": "8765 8775 8785 8795"}},
+                                {"form": "ports", "title": "Check ports…", "values": {"ports": "8765 8775 8785 8795"}},
                                 {"form": "path", "title": "Check the way in…"}]
     form, choose, path = s["forms"]
-    assert form["id"] == "ports" and form["hook"] == "check_ports" and form["fields"][0]["value"] == "8765 8775 8785 8795 8796"
+    assert form["id"] == "ports" and form["hook"] == "check_ports" and form["fields"][0]["value"] == "8765 8775 8785 8795"
     assert choose["id"] == "choose" and choose["hook"] == "choose_ports" and choose["confirm"] is False
     assert path["id"] == "path" and path["fields"][0]["value"] == 8775 and s["paths"] == []  # the first port nothing listens on
     assert s["actions"] == [{"hook": "public_address", "args": [], "title": "Read the public address again",
@@ -230,7 +230,7 @@ def test_the_ports_chosen_are_read_through_the_login(tmp_path):
     group = s["tables"][1]["options"][0]
     assert group["value"] == "setting" and group["choices"][-1] == {"value": "setting", "title": "HW_STATS_PORTS", "note": "25 443 8765"}
     p.login = EnvironmentLogin(env={"HW_STATS_PORTS": "25, mail"})
-    assert p.selected() == hw.Chosen((8765, 8775, 8785, 8795, 8796), "liminal",
+    assert p.selected() == hw.Chosen((8765, 8775, 8785, 8795), "liminal",
                                      "HW_STATS_PORTS: not a port: 'mail' (a number, or a range as 8765-8768); Liminal's own ports are listed instead")
     assert p.status()["problem"].startswith("HW_STATS_PORTS: not a port")
 
@@ -290,12 +290,12 @@ def test_ports_checked_from_the_internet_and_out_kept_for_the_table(tmp_path):
     assert rep["ports"]["8765"]["in"]["state"] == "open" and rep["ports"]["8765"]["here"]["state"] == "listening"
     s = p.status()
     rows = {r[0] if isinstance(r[0], str) else r[0]["text"]: r for r in s["tables"][1]["rows"]}
-    assert list(rows) == ["25", "443", "8765", "8775", "8785", "8795", "8796"]  # the ports chosen and the ports checked
+    assert list(rows) == ["25", "443", "8765", "8775", "8785", "8795"]  # the ports chosen and the ports checked
     assert rows["443"][2]["text"] == "closed" and rows["25"][3]["text"] == "blocked" and rows["8775"][2] == {"text": "–", "sub": "not checked"}
     assert rows["443"][2]["sub"].startswith("as the stand-in says · ")  # when it was checked
     assert s["problem"] == "Liminal's charts page answers from the internet on port 8765: Liminal's pages are for this machine only"
     out = p.ask("check_ports", None, "out")  # the ports chosen, out only
-    assert out["said"] == "5 ports checked out from this machine: 5 open" and out["ok"] is True and len(checker.asked) == 1
+    assert out["said"] == "4 ports checked out from this machine: 4 open" and out["ok"] is True and len(checker.asked) == 1
     json.dumps(s)
 
 
@@ -334,7 +334,7 @@ def test_the_command_line_reads_the_address_and_the_ports(tmp_path, monkeypatch,
     assert cli.main(["ports", "443", "--where", "internet"]) == 0
     out = capsys.readouterr().out.splitlines()
     assert out[0] == f"1 port checked from the internet at {HOME}: 1 open" and out[1].startswith("  443 · from the internet: open")
-    assert cli.main(["ports", "--where", "out"]) == 0 and "5 ports checked out from this machine: 5 open" in capsys.readouterr().out
+    assert cli.main(["ports", "--where", "out"]) == 0 and "4 ports checked out from this machine: 4 open" in capsys.readouterr().out
     assert cli.main(["ports", "8765", "--where", "internet"]) == 1  # Liminal's own page open from the internet: not all right
     assert "8765" in capsys.readouterr().out
     assert cli.main(["ports", "--where", "sideways"]) == 2 and cli.main(["ports", "mail"]) == 2 and cli.main(["ip", "now"]) == 2

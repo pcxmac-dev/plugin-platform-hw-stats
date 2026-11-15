@@ -48,7 +48,7 @@ from liminal_libs.sources.keys import KeyVar
 from .apis import APIS, CAPTURE, CHECK_HOST, GOOGLE, LINUX, OPENDNS, PORTCHECKER, PORTQUIZ, TOOLS, UPNP_IGD, WINDOWS
 from .network import OUT_HOST, PUBLIC_SERVERS, TRACE_TO, CheckHost, Net
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}
@@ -331,7 +331,7 @@ def outcome_cell(o: Outcome | None, empty: str = "not checked"):
 
 
 def whose(app: str) -> str:
-    """One of Liminal's own pages in words: "Liminal's charts", "the integrator's login"."""
+    """One of Liminal's own pages in words: "Liminal's charts", "Liminal's login" (a name of its own, as "the ...", as given)."""
     return app if app.startswith("the ") else f"Liminal's {app}"
 
 
