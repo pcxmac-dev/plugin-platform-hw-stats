@@ -48,7 +48,7 @@ from liminal_libs.sources.keys import KeyVar
 from .apis import APIS, CAPTURE, CHECK_HOST, GOOGLE, LINUX, OPENDNS, PORTCHECKER, PORTQUIZ, TOOLS, UPNP_IGD, WINDOWS
 from .network import OUT_HOST, PUBLIC_SERVERS, TRACE_TO, CheckHost, Net
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}

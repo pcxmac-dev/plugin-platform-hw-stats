@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 (2026-11-15)
+
+The capture card names two more pcap calls: pcap_setnonblock and pcap_get_selectable_fd. liminal-libs 1.54.0's capture
+makes them on Linux, so a read waits on the capture's socket no more than its timeout, and a watch stops when it is told
+to even when no packet comes. Nothing else changes.
+
 ## 0.5.0 (2026-11-15)
 
 Liminal's own ports are named by the OS their app runs on (the user: "linux::liminal-login would be the prefix for WSL
