@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 (2026-11-15)
+
+Liminal's own ports are named by the OS their app runs on (the user: "linux::liminal-login would be the prefix for WSL
+instance and windows:: would be the prefix for the liminal on the ports page"). The Ports table, the summary line and
+a check's answer say `windows::liminal-charts`, `windows::liminal-login` on Windows and `linux::liminal-charts`,
+`linux::liminal-login` in a suite running on Linux, where they said "Liminal's charts", "Liminal's login". New
+`os_prefix()`; `whose(app, system)` takes another OS's prefix for a suite elsewhere on the same PC.
+
 ## 0.4.1 (2026-11-14)
 
 Liminal's own ports are the four apps' alone (liminal-libs 1.52.0; the user, 2026-11-14: "i only want ports for liminal-login ; liminal-platform ; liminal-charts ; liminal-integrator"; "never provide ports for anything else"): the integrator's login at 8796 is gone, a login an app inherits being an object in that app, at its port. The Ports table lists those four when HW_STATS_PORTS is not set.

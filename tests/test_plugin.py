@@ -18,6 +18,7 @@ from liminal_libs.resources import Conn, Disk, Machine, Net, Proc
 from plugin_platform_hw_stats import HwStatsPlugin
 
 GB = 2**30
+OS = hw.os_prefix()  # windows or linux: the prefix of this machine's own ports (0.5.0)
 MB = 2**20
 
 
@@ -113,17 +114,17 @@ def test_the_status_says_the_machine_every_liminal_program_the_disks_and_the_dat
     keys = list(s)
     assert keys[keys.index("network"):keys.index("network") + 6] == ["network", "adapters", "link", "publicAddress", "publicIpv6", "ports"]
     assert s["publicAddress"] == "not read yet (it is read while the plugin is attached to the platform)"
-    assert s["ports"] == ("8765 (Liminal's charts), 8775 (Liminal's platform), 8785 (Liminal's integrator), 8795 (Liminal's login) "
-                          "(Liminal's own: HW_STATS_PORTS is not set)") and "problem" not in s
+    assert s["ports"] == (f"8765 ({OS}::liminal-charts), 8775 ({OS}::liminal-platform), 8785 ({OS}::liminal-integrator), "
+                          f"8795 ({OS}::liminal-login) (Liminal's own: HW_STATS_PORTS is not set)") and "problem" not in s
     programs, ports, disks, folders = s["tables"]  # the disks' space and I/O in one table (the user: "disk io is redundant")
     assert ports["title"] == "Ports" and [c["title"] for c in ports["columns"]] == ["Port", "Here", "From the internet", "Out from this machine",
                                                                                      "Hop by hop"]
-    assert ports["rows"][0] == [{"text": "8765", "sub": "Liminal's charts"},
+    assert ports["rows"][0] == [{"text": "8765", "sub": f"{OS}::liminal-charts"},
                                 {"text": "listening", "sub": "Chart app · port 8765 (pid 4242), this machine only"},
                                 {"text": "–", "sub": "not checked"}, {"text": "–", "sub": "not checked"},
                                 {"form": "path", "title": "Way in", "values": {"port": 8765}, "label": "Check the way in to port 8765"}]
     assert ports["rows"][1][1] == {"text": "free", "sub": "nothing listens on it here"} and len(ports["rows"]) == 4
-    assert ports["rows"][3][0] == {"text": "8795", "sub": "Liminal's login"}  # the four apps' alone (liminal-libs 1.52.0)
+    assert ports["rows"][3][0] == {"text": "8795", "sub": f"{OS}::liminal-login"}  # the four apps' alone (liminal-libs 1.52.0)
     assert ports["actions"] == [{"hook": "refresh_ports", "args": [], "title": "Refresh", "note": "reads what listens on each port now; nothing is sent anywhere"},
                                 {"form": "choose", "title": "Other ports…", "values": {"ports": "8765 8775 8785 8795"}},
                                 {"form": "ports", "title": "Check ports…", "values": {"ports": "8765 8775 8785 8795"}},
@@ -225,7 +226,7 @@ def test_the_ports_chosen_are_read_through_the_login(tmp_path):
     p.login = EnvironmentLogin(env={"HW_STATS_PORTS": "443, 25 8765"})  # the platform's login (the login app's database later)
     assert p.selected() == hw.Chosen((25, 443, 8765), "setting", None)
     s = p.status()
-    assert s["ports"] == "25, 443, 8765 (Liminal's charts) (HW_STATS_PORTS)"
+    assert s["ports"] == f"25, 443, 8765 ({OS}::liminal-charts) (HW_STATS_PORTS)"
     assert [r[0] if isinstance(r[0], str) else r[0]["text"] for r in s["tables"][1]["rows"]] == ["25", "443", "8765"]
     group = s["tables"][1]["options"][0]
     assert group["value"] == "setting" and group["choices"][-1] == {"value": "setting", "title": "HW_STATS_PORTS", "note": "25 443 8765"}
@@ -284,16 +285,16 @@ def test_ports_checked_from_the_internet_and_out_kept_for_the_table(tmp_path):
     assert rep["said"] == f"3 ports checked from the internet at {HOME}: 1 open, 1 closed, 1 blocked; out from this machine: 2 open, 1 blocked"
     assert rep["lines"][0] == ("25 · from the internet: blocked, as the stand-in says · out: blocked, no answer from portquiz.net in 5 s "
                                "(dropped on the way out: a firewall or the ISP) · here: free, nothing listens on it here")
-    assert rep["lines"][2].startswith("8765 (Liminal's charts) · from the internet: open") and rep["lines"][2].endswith(
+    assert rep["lines"][2].startswith(f"8765 ({OS}::liminal-charts) · from the internet: open") and rep["lines"][2].endswith(
         "here: listening, Chart app · port 8765 (pid 4242), this machine only")
-    assert rep["ok"] is False and rep["lines"][-1].startswith("Liminal's charts page answers from the internet on 8765")
+    assert rep["ok"] is False and rep["lines"][-1].startswith(f"{OS}::liminal-charts answers from the internet on 8765")
     assert rep["ports"]["8765"]["in"]["state"] == "open" and rep["ports"]["8765"]["here"]["state"] == "listening"
     s = p.status()
     rows = {r[0] if isinstance(r[0], str) else r[0]["text"]: r for r in s["tables"][1]["rows"]}
     assert list(rows) == ["25", "443", "8765", "8775", "8785", "8795"]  # the ports chosen and the ports checked
     assert rows["443"][2]["text"] == "closed" and rows["25"][3]["text"] == "blocked" and rows["8775"][2] == {"text": "–", "sub": "not checked"}
     assert rows["443"][2]["sub"].startswith("as the stand-in says · ")  # when it was checked
-    assert s["problem"] == "Liminal's charts page answers from the internet on port 8765: Liminal's pages are for this machine only"
+    assert s["problem"] == f"{OS}::liminal-charts answers from the internet on port 8765: Liminal's pages are for this machine only"
     out = p.ask("check_ports", None, "out")  # the ports chosen, out only
     assert out["said"] == "4 ports checked out from this machine: 4 open" and out["ok"] is True and len(checker.asked) == 1
     json.dumps(s)
@@ -375,11 +376,11 @@ def test_the_ports_listed_are_chosen_on_the_page_and_read_again_on_refresh(tmp_p
     assert [r[0] if isinstance(r[0], str) else r[0]["text"] for r in s["tables"][1]["rows"]] == ["80", "443"]
     assert s["ports"] == f"80, 443 (Web: chosen on the page, {hw.KEPT})" and s["tables"][1]["options"][0]["value"] == "web"
     assert s["forms"][1]["fields"][0]["value"] == "80 443" and s["tables"][1]["actions"][2]["values"] == {"ports": "80 443"}
-    assert p.ask("choose_ports", "25, 8765")["said"] == "listing 25, 8765 (Liminal's charts)"
+    assert p.ask("choose_ports", "25, 8765")["said"] == f"listing 25, 8765 ({OS}::liminal-charts)"
     assert p.selected() == hw.Chosen((25, 8765), "chosen")
     assert p.status()["tables"][1]["options"][0]["choices"][-1] == {"value": "chosen", "title": "Typed", "note": "25 8765"}
     p.ask("choose_ports", "liminal")
-    assert p.ask("choose_ports", "chosen")["said"] == "listing 25, 8765 (Liminal's charts)"  # the ports typed, chosen again
+    assert p.ask("choose_ports", "chosen")["said"] == f"listing 25, 8765 ({OS}::liminal-charts)"  # the ports typed, chosen again
     with pytest.raises(ValueError, match="not a port"):
         p.ask("choose_ports", "smtp")
     with pytest.raises(ValueError, match="HW_STATS_PORTS is not set to ports"):
@@ -410,3 +411,15 @@ def test_a_time_near_1970_is_said_without_failing():
     """Windows cannot take a time near 1970 to local time on Python before 3.13 (CI's windows-latest 3.12 showed it):
     it is said in UTC there, never raised."""
     assert hw.clock(0) == "–" and isinstance(hw.clock(1.0), str) and hw.clock(1.0)
+
+
+def test_a_liminal_port_is_named_by_the_os_its_app_runs_on():
+    """0.5.0 (the user, 2026-11-15): windows::liminal-<app> for the suite on Windows, linux::liminal-<app> for one on
+    Linux (a WSL distribution's too); a name of its own is given as it is."""
+    assert (hw.os_prefix("win32"), hw.os_prefix("linux"), hw.os_prefix("darwin"), hw.os_prefix("freebsd14")) == (
+        "windows", "linux", "macos", "freebsd14")
+    assert hw.os_prefix() == hw.os_prefix(sys.platform)
+    assert hw.whose("login", "windows") == "windows::liminal-login" and hw.whose("login", "linux") == "linux::liminal-login"
+    assert hw.whose("charts") == f"{OS}::liminal-charts" and hw.port_name(8795, {8795: "login"}) == f"8795 ({OS}::liminal-login)"
+    assert hw.whose("the Liminal Platform serving this page") == "the Liminal Platform serving this page"
+    assert hw.port_name(25, {8795: "login"}) == "25"

@@ -48,7 +48,7 @@ from liminal_libs.sources.keys import KeyVar
 from .apis import APIS, CAPTURE, CHECK_HOST, GOOGLE, LINUX, OPENDNS, PORTCHECKER, PORTQUIZ, TOOLS, UPNP_IGD, WINDOWS
 from .network import OUT_HOST, PUBLIC_SERVERS, TRACE_TO, CheckHost, Net
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}
@@ -330,9 +330,19 @@ def outcome_cell(o: Outcome | None, empty: str = "not checked"):
     return cell(o.state, why or None)
 
 
-def whose(app: str) -> str:
-    """One of Liminal's own pages in words: "Liminal's charts", "Liminal's login" (a name of its own, as "the ...", as given)."""
-    return app if app.startswith("the ") else f"Liminal's {app}"
+def os_prefix(platform: str | None = None) -> str:
+    """The OS a Liminal app runs on, as the Ports page names it: windows, linux, macos, else the system's own word
+    (`platform`: sys.platform, this machine's by default)."""
+    p = sys.platform if platform is None else platform
+    return "windows" if p == "win32" else "linux" if p.startswith("linux") else "macos" if p == "darwin" else p
+
+
+def whose(app: str, system: str | None = None) -> str:
+    """One of Liminal's own pages by its name on the Ports page: the OS it runs on, then liminal-<app> (0.5.0; the
+    user, 2026-11-15: "linux::liminal-login would be the prefix for WSL instance and windows:: would be the prefix for
+    the liminal on the ports page"): windows::liminal-charts here on Windows, linux::liminal-login in a suite on Linux.
+    `system`: another OS's prefix (a suite elsewhere on this PC). A name of its own, as "the ...", is given as it is."""
+    return app if app.startswith("the ") else f"{system or os_prefix()}::liminal-{app}"
 
 
 def port_name(port: int, own: dict[int, str]) -> str:
@@ -361,7 +371,7 @@ def report(chosen, where: str, public: Address | None, results: dict, here: dict
         seen = (("from the internet", results[p].get("in")), ("out", results[p].get("out")), ("here", here.get(p)))
         lines.append(" · ".join([port_name(p, own), *(f"{label}: {o.state}" + (f", {o.why}" if o.why else "") for label, o in seen if o)]))
     exposed = [p for p in chosen if p in own and results[p].get("in") and results[p]["in"].state == "open"]
-    lines += [f"{whose(own[p])} page answers from the internet on {p}: Liminal's pages are for this machine only (look at the "
+    lines += [f"{whose(own[p])} answers from the internet on {p}: Liminal's pages are for this machine only (look at the "
               "router's port forwarding and the firewall)" for p in exposed]
     failed = [p for p in chosen if any(o.state == "failed" for o in results[p].values())]
     return {"said": f"{plural(len(chosen), 'port')} checked " + "; ".join(parts), "lines": lines,
@@ -972,7 +982,7 @@ class HwStatsPlugin(MachinePlugin):
         own = own_ports()
         with self._rt.lock:
             hits = sorted(p for p, r in self._rt.checked.items() if p in own and r.get("in") and r["in"].state == "open")
-        return [f"{whose(own[p])} page answers from the internet on port {p}: Liminal's pages are for this machine only" for p in hits]
+        return [f"{whose(own[p])} answers from the internet on port {p}: Liminal's pages are for this machine only" for p in hits]
 
     def _ports_table(self, chosen: Chosen, here: dict) -> dict:
         """The Ports table (liminal-platform 0.7.0: a table's own choices and buttons): the ports listed chosen above
