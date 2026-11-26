@@ -22,6 +22,15 @@ the router over UPnP and Npcap or libpcap, each with its makers' pages, its part
 plugin's page; `api_facts` says what the plugin kept of them (the public address and whose answer it was, the last
 checks and the last path check), asking nothing.
 
+Who may ask what reaches beyond this machine (0.5.2, the sweep after the review's PLT-H1; liminal-libs 1.66.0's
+apps/asking.py): public_address, check_ports, check_path and choose_ports are asked only from the page
+(PAGE_ONLY_HOOKS): another plugin's ask is refused, and liminal-platform 0.34.0 asks its login whether you are at the
+page. Before, any program on this machine asked them with two headers, the page's confirmation being the page's alone:
+this network's public address and any ports sent to check-host.net, a port listened on at every address while its way
+in was checked (on a DMZ host, open to the internet meanwhile), the ports listed changed under you. Its reads (present,
+status, view, charts, refresh_ports) send nothing anywhere and are asked by anyone; its own reading of the public
+address every 15 minutes and the command line call the code itself.
+
     python -m plugin_platform_hw_stats status | view [recent|day] | charts [recent|day] | ip | ports [PORTS] [--where W]
 """
 from __future__ import annotations
@@ -48,7 +57,7 @@ from liminal_libs.sources.keys import KeyVar
 from .apis import APIS, CAPTURE, CHECK_HOST, GOOGLE, LINUX, OPENDNS, PORTCHECKER, PORTQUIZ, TOOLS, UPNP_IGD, WINDOWS
 from .network import OUT_HOST, PUBLIC_SERVERS, TRACE_TO, CheckHost, Net
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}
@@ -517,6 +526,16 @@ class HwStatsPlugin(MachinePlugin):
     order = 730
     ICON = "gauge"
     HOOKS = (*MachinePlugin.HOOKS, "view", "charts", "public_address", "check_ports", "choose_ports", "refresh_ports", "check_path")
+    # What reaches beyond this machine, or changes the ports it lists, asked only from its page (0.5.2, the sweep after
+    # the review's PLT-H1; liminal-libs 1.66.0's apps/asking.py): another plugin's ask is refused (403), and
+    # liminal-platform 0.34.0 refuses one over HTTP (401) unless its login shows that you are at the page. Before, any
+    # program on this machine could ask them with two headers, the page's confirmation being the page's alone: the
+    # name servers asked (public_address); this network's public address and any ports sent to check-host.net, and
+    # connections made to portquiz.net (check_ports); a port listened on at every address, its packets watched, the
+    # router and portchecker.io asked (check_path); the ports listed changed (choose_ports). The plugin's own reading of
+    # the address while attached and the command line call their code directly, not through an ask; its reads
+    # (present, status, view, charts, refresh_ports) send nothing anywhere and are asked by anyone.
+    PAGE_ONLY_HOOKS = ("public_address", "check_ports", "choose_ports", "check_path")
     keys = KEYS
 
     def __init__(self, probe=None, data: Path | None = None, resolve=None, checker=None, connect=None, net=None, **monitor_options):

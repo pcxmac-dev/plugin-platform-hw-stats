@@ -119,6 +119,17 @@ or `both`; `address`, when given, must still be this network's), `choose_ports(p
 `remote`, `setting`, `chosen` or ports as typed), `refresh_ports()` (what listens, read now), `check_path(port, listen)`
 (the way in, hop by hop, on a thread: the status's `paths` and the Traffic table follow it).
 
+Who may ask them (0.5.2; the sweep after the independent review's finding PLT-H1, 2026-11-25): `public_address`,
+`check_ports`, `check_path` and `choose_ports` are the plugin's `PAGE_ONLY_HOOKS` (liminal-libs 1.66.0's word): what
+reaches beyond this machine, and the ports the page lists. Another plugin's ask of one is refused, and liminal-platform
+0.34.0 refuses one over HTTP unless its login shows that you are at the page. Before, any program on this machine could
+ask them with two headers and none of the page's confirmations: this network's public address and any ports sent to
+check-host.net, a port listened on at every address while its way in was checked. `present`, `status`, `view`,
+`charts` and `refresh_ports` send nothing anywhere and are asked by anyone, as before. The plugin's own reading of the
+public address while attached and the command line call the same code, not through an ask. The platform's check
+rests on its login's word that your browser is signed in, and a local login signs `secret` and `default` in with no
+password: it does not stop a program on this machine that signs itself in.
+
 ## Its setting
 
 | Variable | Pair | What |

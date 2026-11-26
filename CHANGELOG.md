@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.2 (2026-11-25)
+
+What reaches beyond this machine is asked only from the page (the sweep after the independent review's finding PLT-H1;
+the user's choice, 2026-11-25: plugin releases, each plugin declaring its change actions page-only). The platform hands
+an ask over HTTP (`POST /api/machines/hw-stats/ask`, two headers and no sign-in) straight to a hook, so any program on
+this machine asked every hook this plugin has, with none of the page's confirmations.
+
+- **`PAGE_ONLY_HOOKS`** (liminal-libs 1.66.0's word): `public_address`, `check_ports`, `check_path` and
+  `choose_ports`. Another plugin's ask of one is refused (403), and liminal-platform 0.34.0 refuses one over HTTP (401)
+  unless its login shows that you are at the page. Before, a program of any account on this machine had:
+  - `check_ports` send this network's public address and any twelve ports to check-host.net, whose servers then
+    connect to them, and this machine connect to portquiz.net on each;
+  - `check_path` listen on a port at every address while its way in is checked (on a DMZ host, open to the internet
+    meanwhile), watch that port's packets at the network adapter, and ask the router over UPnP and portchecker.io;
+  - `public_address` ask OpenDNS's and Google's name servers again, as often as it liked;
+  - `choose_ports` change the ports the page lists and fills into Check ports.
+  A platform that holds no login asks them as before. The 401 rests on the login's word that your browser is signed
+  in, and a local login signs `secret` and `default` in with no password, so a program on this machine can sign itself
+  in and ask them still: a proof that a program cannot make is the login's and the platform's to give.
+- Asked by anyone, as before: `present`, `status`, `view`, `charts` and `refresh_ports` (reads of this machine, which
+  send nothing anywhere). No plugin's code asks any hook of this one (2026-11-25). The plugin's own reading of the
+  public address (at its attach and every 15 minutes) and the command line call the code in their own process, not
+  through an ask, so they work as before.
+- No new floor: a liminal-libs before 1.66.0 holds no hook to who asks it, and liminal-platform 0.34.0 then reads the
+  word from the plugin itself.
+- Tests: `tests/test_who_asks.py`, through the library's own App over stand-ins for the probe, the name servers,
+  check-host.net, a connection out and the path check's network (skipped on a liminal-libs before 1.66.0): each of the
+  four refused to another plugin and to an ask that names no one, no name server asked again, nothing sent, no port
+  listened on, the ports listed unchanged; each done when the page asks it; the reads answered to a plugin. Taking a
+  hook out of the word fails them.
+
+Needs liminal-libs>=1.52.0.
+
 ## 0.5.1 (2026-11-15)
 
 The capture card names two more pcap calls: pcap_setnonblock and pcap_get_selectable_fd. liminal-libs 1.54.0's capture
