@@ -125,7 +125,8 @@ reaches beyond this machine, and the ports the page lists. Another plugin's ask 
 0.34.0 refuses one over HTTP unless its login shows that you are at the page. Before, any program on this machine could
 ask them with two headers and none of the page's confirmations: this network's public address and any ports sent to
 check-host.net, a port listened on at every address while its way in was checked. `present`, `status`, `view`,
-`charts` and `refresh_ports` send nothing anywhere and are asked by anyone, as before. The plugin's own reading of the
+`charts` and `refresh_ports` send nothing anywhere and are asked by anyone, as before: since 0.5.3 the last three say
+so themselves (`READ_HOOKS`), as liminal-libs 1.107.0 keeps a hook declared for no one to its page. The plugin's own reading of the
 public address while attached and the command line call the same code, not through an ask. The platform's check
 rests on its login's word that your browser is signed in, and a local login signs `secret` and `default` in with no
 password: it does not stop a program on this machine that signs itself in.

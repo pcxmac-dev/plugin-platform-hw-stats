@@ -5,9 +5,10 @@ to check-host.net, connections made to portquiz.net), check_path (a port listene
 watched, the router and a service on the internet asked) and choose_ports (the ports the page lists). Another plugin's
 ask is refused, and so is an ask that names no one; over HTTP the platform also asks its login whether you are at the
 page. Before, any program on this machine asked them with two headers, with none of the page's confirmations. Its reads
-send nothing anywhere and are asked by anyone, as before. Asked through the library's own App (its ask names who asks
-as the platform's does), over stand-ins for the probe, the name servers, check-host.net, a connection out and the path
-check's network: nothing is sent, nothing listens."""
+send nothing anywhere and are asked by anyone, as before: since 0.5.3 view, charts and refresh_ports say so themselves
+(READ_HOOKS), as liminal-libs 1.107.0 keeps a hook declared for no one to its page. Asked through the library's own
+App (its ask names who asks as the platform's does), over stand-ins for the probe, the name servers, check-host.net, a
+connection out and the path check's network: nothing is sent, nothing listens."""
 from __future__ import annotations
 
 import pytest
@@ -26,6 +27,7 @@ from test_plugin import Checker, wait_until  # noqa: E402
 
 OUTSIDE = ("public_address", "check_ports", "choose_ports", "check_path")
 READS = ("present", "status", "view", "charts", "refresh_ports")
+OWN_READS = ("view", "charts", "refresh_ports")  # its own, said to be reads in so many words since 0.5.3
 ASKS = {"public_address": (), "check_ports": ("8765 443", "both", HOME), "choose_ports": ("web",),
         "check_path": (8795, "yes")}  # each as a program would send it
 
@@ -142,3 +144,19 @@ def test_another_plugin_or_no_one_asking_sends_nothing_anywhere_and_its_page_doe
     assert app.from_page("check_path", 8795, "yes")["said"].startswith("checking the way in to port 8795")
     assert wait_until(lambda: not stats._rt.path.running) and stats._rt.path.port == 8795
     assert out.world.ear is not None and stats._rt.path.listening == "ours"  # the check listened, where nothing did
+
+
+def test_no_hook_is_left_undeclared_and_its_own_reads_are_said_to_be_reads():
+    """0.5.3, closed by default (liminal-libs 1.107.0): every hook it answers says who may ask it, so none is left to
+    the default and the library's conformance has no warning. Read from its words, so it holds on an older library."""
+    from liminal_libs.sources import conformance
+
+    assert HwStatsPlugin.READ_HOOKS == OWN_READS
+    assert set(OWN_READS) <= set(internal.declared(MACHINE, "READ_HOOKS"))
+    assert not set(OWN_READS) & set(internal.declared(MACHINE, "PAGE_ONLY_HOOKS"))
+    said = {h for word in ("READ_HOOKS", "SERVICE_HOOKS", "PLUGIN_ONLY_HOOKS", "PAGE_ONLY_HOOKS")
+            for h in internal.declared(MACHINE, word)} | {t.as_dict()["hook"] for t in getattr(MACHINE, "TABS", ())}
+    own = [h for h in MACHINE.interface()["hooks"] if h not in ("setup", "run", "scan")]
+    assert own and [h for h in own if h not in said] == []
+    warnings = getattr(conformance, "warnings", None)  # liminal-libs 1.107.0
+    assert warnings is None or warnings(MACHINE) == []

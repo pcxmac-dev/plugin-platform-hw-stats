@@ -57,7 +57,7 @@ from liminal_libs.sources.keys import KeyVar
 from .apis import APIS, CAPTURE, CHECK_HOST, GOOGLE, LINUX, OPENDNS, PORTCHECKER, PORTQUIZ, TOOLS, UPNP_IGD, WINDOWS
 from .network import OUT_HOST, PUBLIC_SERVERS, TRACE_TO, CheckHost, Net
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"
 OWN = ("platform", "Platform")  # this process's role when its command line names no Liminal app (a test, a one-off)
 UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 SYSTEMS = {"windows": "Windows", "linux": "Linux", "other": sys.platform}
@@ -536,6 +536,11 @@ class HwStatsPlugin(MachinePlugin):
     # the address while attached and the command line call their code directly, not through an ask; its reads
     # (present, status, view, charts, refresh_ports) send nothing anywhere and are asked by anyone.
     PAGE_ONLY_HOOKS = ("public_address", "check_ports", "choose_ports", "check_path")
+    # Its reads of this machine, said to be anyone's in so many words (0.5.3; the user, 2026-11-26: "Yes, closed by
+    # default": since liminal-libs 1.107.0 a hook a plugin declares for no one is its page's alone). They need no key
+    # and no rights, send nothing anywhere and answer from this machine alone: a span's view, its charts, the ports
+    # read again. With them every hook says who may ask it (conformance.warnings is empty).
+    READ_HOOKS = ("view", "charts", "refresh_ports")
     keys = KEYS
 
     def __init__(self, probe=None, data: Path | None = None, resolve=None, checker=None, connect=None, net=None, **monitor_options):

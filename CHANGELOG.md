@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.3 (2026-11-26)
+
+Its reads of this machine say that anyone here may ask them. The user, 2026-11-26: "Yes, closed by default"
+(liminal-libs 1.107.0: a hook a plugin declares for no one is its page's alone); these three need no key and no rights
+and send nothing anywhere, so they stay reads.
+
+- **`READ_HOOKS = ("view", "charts", "refresh_ports")`**: a span's view, its charts and the ports read again, asked
+  by anyone on this machine as before. Without the word, liminal-libs 1.107.0 would refuse them to another plugin and
+  to an ask that names no one.
+- What reaches beyond this machine stays the page's alone (`public_address`, `check_ports`, `choose_ports`,
+  `check_path`): nothing changes there.
+- Every hook now says who may ask it, so the library's `conformance.warnings` is empty.
+
+Tests: a test that no hook is left undeclared, and that the three are reads and not the page's. They fail when the
+word is taken out, on liminal-libs 1.106.0 and on 1.107.0 alike. No new requirement: the word is the plugin
+contract's own.
+
 ## 0.5.2 (2026-11-25)
 
 What reaches beyond this machine is asked only from the page (the sweep after the independent review's finding PLT-H1;
